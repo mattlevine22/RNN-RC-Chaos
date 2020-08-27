@@ -1,10 +1,8 @@
 #!/bin/bash
 #SBATCH --account=astuart
-#SBATCH --time=00:01:00
+#SBATCH --time=24:00:00
 
 cd ../../../Methods
-conda init
-conda activate vlachas
 
 for NR in 1 10
 do
