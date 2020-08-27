@@ -1,10 +1,9 @@
 #!/bin/bash
 #SBATCH --account=astuart
 #SBATCH --time=00:01:00
-#SBATCH --exclusive
-#SBATCH --gres=gpu:1
 
 cd ../../../Methods
+conda init
 conda activate vlachas
 
 for NR in 1 10
@@ -51,6 +50,8 @@ srun --exclusive -N 1 -n 1 -G 1 python3 RUN.py rnn_statefull \
 --iterative_prediction_length 1000 \
 --num_test_ICS 2 \
 --retrain 0
+done
+done
 done
 done
 done
