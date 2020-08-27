@@ -1,14 +1,19 @@
 #!/bin/bash
+#SBATCH --account=astuart
+#SBATCH --time=24:00:00
+#SBATCH --exclusive
+#SBATCH --gres=gpu:1
 
 cd ../../../Methods
+conda activate vlachas
 
-for RDIM in 1
+for RDIM in 2 3
 do
-for SS in 200
+for SS in 50 200
 do
-for SL in 10
+for SL in 1 10 100
 do
-python3 RUN.py rnn_statefull \
+srun --exclusive -N 1 -n 1 -G 1 python3 RUN.py rnn_statefull \
 --mode all \
 --display_output 1 \
 --system_name Lorenz3D \
