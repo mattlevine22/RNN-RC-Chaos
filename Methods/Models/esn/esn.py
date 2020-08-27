@@ -63,6 +63,7 @@ class esn(object):
 		self.scaler = scaler(self.scaler_tt)
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
+		self.dt = self.get_dt()
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -182,7 +183,7 @@ class esn(object):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			# H_dyn[t] = self.augmentHidden(h)
 
 		print("\n")
@@ -204,16 +205,16 @@ class esn(object):
 		Y = []
 
 		print("TRAINING: Teacher forcing...")
-		
-		for t in range(tl - 1):
+
+		for t in range(tl - 2):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
-			target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
+			target = (np.reshape(train_input_sequence[t+dynamics_length+2], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))) / self.dt
 			Y.append(target[:,0])
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
 				# Batched approach used in the pinv case
@@ -300,14 +301,15 @@ class esn(object):
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
 
+		out = 0
 		prediction_warm_up = []
 		h = np.zeros((self.reservoir_size, 1))
 		for t in range(dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
-			out = W_out @ self.augmentHidden(h)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			out = out + self.dt * W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
 
 		print("\n")
@@ -317,10 +319,10 @@ class esn(object):
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			out = W_out @ self.augmentHidden(h)
+			out = out + self.dt * W_out @ self.augmentHidden(h)
 			prediction.append(out)
 			i = out
-			h = np.tanh(W_h @ h + W_in @ i)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 
 		prediction = np.array(prediction)[:,:,0]
@@ -349,9 +351,10 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 
+		out = 0
 		target = target_sequence
 		prediction = []
 		signal = []
@@ -359,17 +362,24 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
-			out = W_out @ self.augmentHidden(h)
+			out = out + self.dt * W_out @ self.augmentHidden(h)
 			prediction.append(out)
 			# TEACHER FORCING
 			i = np.reshape(input_sequence[t], (-1,1))
 			# i = out
-			h = np.tanh(W_h @ h + W_in @ i)
+			h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 		prediction = np.array(prediction)[:,:,0]
 		target = np.array(target)
 		signal = np.array(signal)
 		return prediction, target, signal
+
+	def get_dt(self):
+		with open(self.test_data_path, "rb") as file:
+			data = pickle.load(file)
+			dt = data["dt"]
+			del data
+		return dt
 
 	def testing(self):
 		if self.loadModel()==0:
