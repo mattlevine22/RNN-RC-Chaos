@@ -1,12 +1,16 @@
 #!/bin/bash
 #SBATCH --account=astuart
-#SBATCH --time=24:00:00
+#SBATCH --time=00:01:00
 #SBATCH --exclusive
 #SBATCH --gres=gpu:1
 
 cd ../../../Methods
 conda activate vlachas
 
+for NR in 1 10
+do
+for ME in 50 500
+do
 for RDIM in 2 3
 do
 for SS in 50 200
@@ -38,8 +42,8 @@ srun --exclusive -N 1 -n 1 -G 1 python3 RUN.py rnn_statefull \
 --rnn_size_layers $SS \
 --subsample 1 \
 --batch_size 32 \
---max_epochs 500 \
---num_rounds 10 \
+--max_epochs $ME \
+--num_rounds $NR \
 --overfitting_patience 10 \
 --training_min_epochs 1 \
 --learning_rate 0.0001 \
