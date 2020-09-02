@@ -187,7 +187,7 @@ class esn(object):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
-			if self.euler_hidden:_hidden
+			if self.euler_hidden:
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
