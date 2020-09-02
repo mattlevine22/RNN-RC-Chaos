@@ -129,7 +129,7 @@ class scaler(object):
 		self.data_min = 0
 		self.data_max = 0
 		self.data_mean = 0
-		self.data_std = 0       
+		self.data_std = 0
 
 	def scaleData(self, input_sequence, reuse=None):
 		# data_mean = np.mean(train_input_sequence,0)
@@ -341,6 +341,8 @@ def getESNParser(parser):
 	parser.add_argument("--solver", help="solver used to learn mapping H -> Y, it can be [pinv, saga, gd]", type=str, required=False, default="pinv")
 	parser.add_argument("--reference_train_time", help="The reference train time in hours", type=float, default=24)
 	parser.add_argument("--buffer_train_time", help="The buffer train time to save the model in hours", type=float, default=0.5)
+	parser.add_argument("--euler_hidden", help="If true (1), use Euler style recurrent dynamics. Else, (0)", type=int, default=0)
+	parser.add_argument("--euler_output", help="If true (1), use Euler style output dynamics. Else, (0)", type=int, default=0)
 
 	return parser
 
@@ -502,4 +504,3 @@ def reformatParallelGroupDataPath(model, path, gn, ll):
 class Circ(list):
 	def __getitem__(self, idx):
 		return super(Circ, self).__getitem__(idx % len(self))
-

@@ -29,7 +29,7 @@ import psutil
 class esn(object):
 	def delete(self):
 		return 0
-		
+
 	def __init__(self, params):
 		self.display_output = params["display_output"]
 
@@ -63,6 +63,10 @@ class esn(object):
 		self.scaler = scaler(self.scaler_tt)
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
+		self.dt = self.get_dt()
+		self.euler_hidden = params["euler_hidden"]
+		self.euler_output = params["euler_output"]
+
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -74,10 +78,10 @@ class esn(object):
 
 	def getKeysInModelName(self):
 		keys = {
-		'RDIM':'RDIM', 
-		'N_used':'N_used', 
-		'approx_reservoir_size':'SIZE', 
-		'degree':'D', 
+		'RDIM':'RDIM',
+		'N_used':'N_used',
+		'approx_reservoir_size':'SIZE',
+		'degree':'D',
 		'radius':'RADIUS',
 		'sigma_input':'SIGMA',
 		'dynamics_length':'DL',
@@ -85,7 +89,7 @@ class esn(object):
 		'iterative_prediction_length':'IPL',
 		'regularization':'REG',
 		#'num_test_ICS':'NICS',
-		'worker_id':'WID', 
+		'worker_id':'WID',
 		}
 		return keys
 
@@ -105,7 +109,7 @@ class esn(object):
 		# W = sparse.random(sizex, sizey, density=sparsity, random_state=worker_id, data_rvs=np.random.randn)
 		# Sparse matrix with elements between -1 and 1
 		# W.data *=2
-		# W.data -=1 
+		# W.data -=1
 		# to print the values do W.A
 		print("EIGENVALUE DECOMPOSITION")
 		eigenvalues, eigvectors = splinalg.eigs(W)
@@ -120,7 +124,7 @@ class esn(object):
 		h_aug[::2]=pow(h_aug[::2],2.0)
 		return h_aug
 
-	def getAugmentedStateSize(self): 
+	def getAugmentedStateSize(self):
 		return self.reservoir_size
 
 	# def augmentHidden(self, h):
@@ -148,10 +152,11 @@ class esn(object):
 			train_input_sequence = train_input_sequence[:N_used, :input_dim]
 			dt = data["dt"]
 			del data
+
 		print("##Using {:}/{:} dimensions and {:}/{:} samples ##".format(input_dim, dim, N_used, N_all))
 		if N_used > N_all: raise ValueError("Not enough samples in the training data.")
 		print("SCALING")
-		
+
 		train_input_sequence = self.scaler.scaleData(train_input_sequence)
 
 		N, input_dim = np.shape(train_input_sequence)
@@ -182,7 +187,10 @@ class esn(object):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_hidden:_hidden
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
 			# H_dyn[t] = self.augmentHidden(h)
 
 		print("\n")
@@ -204,16 +212,24 @@ class esn(object):
 		Y = []
 
 		print("TRAINING: Teacher forcing...")
-		
-		for t in range(tl - 1):
+
+		matt_offset = 1 + self.euler_output
+		for t in range(tl - matt_offset):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_hidden:
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
-			target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
+			if self.euler_output:
+				target = (np.reshape(train_input_sequence[t+dynamics_length+2], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))) / self.dt
+			else:
+				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
+
 			Y.append(target[:,0])
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
 				# Batched approach used in the pinv case
@@ -240,14 +256,14 @@ class esn(object):
 			print(np.shape(H))
 			print(np.shape(Y))
 
-		
+
 		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
 
 		if self.solver == "pinv":
 			"""
 			Learns mapping H -> Y with Penrose Pseudo-Inverse
 			"""
-			I = np.identity(np.shape(HTH)[1])	
+			I = np.identity(np.shape(HTH)[1])
 			pinv_ = scipypinv2(HTH + self.regularization*I)
 			W_out = YTH @ pinv_
 
@@ -259,7 +275,7 @@ class esn(object):
 			# print(np.shape(H))
 			# print(np.shape(Y))
 			# print("##")
-			ridge.fit(H, Y) 
+			ridge.fit(H, Y)
 			W_out = ridge.coef_
 
 		else:
@@ -269,7 +285,7 @@ class esn(object):
 		self.W_in = W_in
 		self.W_h = W_h
 		self.W_out = W_out
-		
+
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out)
 		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out)
@@ -295,19 +311,26 @@ class esn(object):
 
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
-		
+
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
 
+		out = 0
 		prediction_warm_up = []
 		h = np.zeros((self.reservoir_size, 1))
 		for t in range(dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
-			out = W_out @ self.augmentHidden(h)
+			if self.euler_hidden:
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_output:
+				out = out + self.dt * W_out @ self.augmentHidden(h)
+			else:
+				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
 
 		print("\n")
@@ -317,10 +340,16 @@ class esn(object):
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			out = W_out @ self.augmentHidden(h)
+			if self.euler_output:
+				out = out + self.dt * W_out @ self.augmentHidden(h)
+			else:
+				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
 			i = out
-			h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_hidden:
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 
 		prediction = np.array(prediction)[:,:,0]
@@ -340,7 +369,7 @@ class esn(object):
 
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
-		
+
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
@@ -349,9 +378,13 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_hidden:
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 
+		out = i
 		target = target_sequence
 		prediction = []
 		signal = []
@@ -359,17 +392,32 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
-			out = W_out @ self.augmentHidden(h)
+			if self.euler_output:
+				out = out + self.dt * W_out @ self.augmentHidden(h)
+			else:
+				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
+
 			# TEACHER FORCING
 			i = np.reshape(input_sequence[t], (-1,1))
 			# i = out
-			h = np.tanh(W_h @ h + W_in @ i)
+			if self.euler_hidden:
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+			else:
+				h = np.tanh(W_h @ h + W_in @ i)
+
 		print("\n")
 		prediction = np.array(prediction)[:,:,0]
 		target = np.array(target)
 		signal = np.array(signal)
 		return prediction, target, signal
+
+	def get_dt(self):
+		with open(self.test_data_path, "rb") as file:
+			data = pickle.load(file)
+			dt = data["dt"]
+			del data
+		return dt
 
 	def testing(self):
 		if self.loadModel()==0:
@@ -390,9 +438,9 @@ class esn(object):
 			data = pickle.load(file)
 			train_input_sequence = data["train_input_sequence"][:, :self.input_dim]
 			del data
-			
+
 		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred = self.predictIndexes(train_input_sequence, testing_ic_indexes, dt, "TRAIN")
-		
+
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TRAIN = {:s}".format(var_name, var_name))
 		return 0
@@ -405,9 +453,9 @@ class esn(object):
 			test_input_sequence = data["test_input_sequence"][:, :self.input_dim]
 			dt = data["dt"]
 			del data
-			
+
 		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred = self.predictIndexes(test_input_sequence, testing_ic_indexes, dt, "TEST")
-		
+
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TEST = {:s}".format(var_name, var_name))
 		return 0
@@ -467,7 +515,7 @@ class esn(object):
 		if self.write_to_log == 1:
 			logfile_test = self.saving_path + self.logfile_dir + self.model_name  + "/test.txt"
 			writeToTestLogFile(logfile_test, self)
-			
+
 		data = {}
 		for var_name in getNamesInterestingVars():
 			exec("data['{:s}_TEST'] = self.{:s}_TEST".format(var_name, var_name))
@@ -527,4 +575,3 @@ class esn(object):
 			pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
 			del data
 		return 0
-
