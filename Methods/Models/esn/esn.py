@@ -66,7 +66,7 @@ class esn(object):
 		self.dt = self.get_dt()
 		self.euler_hidden = params["euler_hidden"]
 		self.euler_output = params["euler_output"]
-
+		self.gamma = params["gamma"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -90,6 +90,9 @@ class esn(object):
 		'regularization':'REG',
 		#'num_test_ICS':'NICS',
 		'worker_id':'WID',
+		'euler_hidden': 'EulerHid',
+		'euler_output': 'EulerOut',
+		'gamma': 'GAM'
 		}
 		return keys
 
@@ -176,6 +179,11 @@ class esn(object):
 		q = int(self.reservoir_size/input_dim)
 		for i in range(0, input_dim):
 			W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
+		if self.euler_output:
+			W_in = W_in / dt
+
+		# Set the diffusion term
+		gammaI = self.gamma * sparse.eye(self.reservoir_size)
 
 		# TRAINING LENGTH
 		tl = N - dynamics_length
@@ -188,7 +196,7 @@ class esn(object):
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			# H_dyn[t] = self.augmentHidden(h)
@@ -219,7 +227,7 @@ class esn(object):
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			# AUGMENT THE HIDDEN STATE
@@ -311,6 +319,7 @@ class esn(object):
 
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
+		gammaI = self.gamma * sparse.eye(self.reservoir_size)
 
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
@@ -318,13 +327,14 @@ class esn(object):
 
 		out = 0
 		prediction_warm_up = []
+		hidden_warm_up = []
 		h = np.zeros((self.reservoir_size, 1))
 		for t in range(dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			if self.euler_output:
@@ -332,11 +342,13 @@ class esn(object):
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
+			hidden_warm_up.append(h)
 
 		print("\n")
 
 		target = input_sequence[dynamics_length:]
 		prediction = []
+		hidden = []
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
@@ -345,9 +357,10 @@ class esn(object):
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
+			hidden.append(h)
 			i = out
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
@@ -355,10 +368,14 @@ class esn(object):
 		prediction = np.array(prediction)[:,:,0]
 		prediction_warm_up = np.array(prediction_warm_up)[:,:,0]
 
+		hidden = np.array(hidden)[:,:,0]
+		hidden_warm_up = np.array(hidden_warm_up)[:,:,0]
+
 		target_augment = input_sequence
 		prediction_augment = np.concatenate((prediction_warm_up, prediction), axis=0)
+		hidden_augment = np.concatenate((hidden_warm_up, hidden), axis=0)
 
-		return prediction, target, prediction_augment, target_augment
+		return prediction, target, prediction_augment, target_augment, hidden, hidden_augment
 
 	def predictSequenceMemoryCapacity(self, input_sequence, target_sequence):
 		W_h = self.W_h
@@ -369,6 +386,7 @@ class esn(object):
 
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
+		gammaI = self.gamma * sparse.eye(self.reservoir_size)
 
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
@@ -379,7 +397,7 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
@@ -402,7 +420,7 @@ class esn(object):
 			i = np.reshape(input_sequence[t], (-1,1))
 			# i = out
 			if self.euler_hidden:
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 
@@ -439,7 +457,7 @@ class esn(object):
 			train_input_sequence = data["train_input_sequence"][:, :self.input_dim]
 			del data
 
-		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred = self.predictIndexes(train_input_sequence, testing_ic_indexes, dt, "TRAIN")
+		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, testing_ic_indexes, dt, "TRAIN")
 
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TRAIN = {:s}".format(var_name, var_name))
@@ -454,7 +472,7 @@ class esn(object):
 			dt = data["dt"]
 			del data
 
-		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred = self.predictIndexes(test_input_sequence, testing_ic_indexes, dt, "TEST")
+		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(test_input_sequence, testing_ic_indexes, dt, "TEST")
 
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TEST = {:s}".format(var_name, var_name))
@@ -465,6 +483,7 @@ class esn(object):
 		num_test_ICS = self.num_test_ICS
 		input_sequence = self.scaler.scaleData(input_sequence, reuse=1)
 		predictions_all = []
+		hidden_all = []
 		truths_all = []
 		rmse_all = []
 		rmnse_all = []
@@ -475,20 +494,22 @@ class esn(object):
 				print("IC {:}/{:}, {:2.3f}%".format(ic_num, num_test_ICS, ic_num/num_test_ICS*100))
 			ic_idx = ic_indexes[ic_num]
 			input_sequence_ic = input_sequence[ic_idx-self.dynamics_length:ic_idx+self.iterative_prediction_length]
-			prediction, target, prediction_augment, target_augment = self.predictSequence(input_sequence_ic)
+			prediction, target, prediction_augment, target_augment, hidden, hidden_augment = self.predictSequence(input_sequence_ic)
 			prediction = self.scaler.descaleData(prediction)
 			target = self.scaler.descaleData(target)
 			rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, self.scaler.data_std)
 			predictions_all.append(prediction)
+			hidden_all.append(hidden)
 			truths_all.append(target)
 			rmse_all.append(rmse)
 			rmnse_all.append(rmnse)
 			num_accurate_pred_005_all.append(num_accurate_pred_005)
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
-			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, self.dynamics_length)
+			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 
 		predictions_all = np.array(predictions_all)
+		hidden_all = np.array(hidden_all)
 		truths_all = np.array(truths_all)
 		rmse_all = np.array(rmse_all)
 		rmnse_all = np.array(rmnse_all)
@@ -508,7 +529,7 @@ class esn(object):
 		print("FREQUENCY ERROR: {:}".format(error_freq))
 
 		plotSpectrum(self, sp_true, sp_pred, freq_true, freq_pred, set_name)
-		return rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred
+		return rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all
 
 	def saveResults(self):
 
@@ -537,6 +558,7 @@ class esn(object):
 				self.W_out = data["W_out"]
 				self.W_in = data["W_in"]
 				self.W_h = data["W_h"]
+				self.gamma = data["gamma"]
 				self.scaler = data["scaler"]
 				del data
 			return 0
@@ -568,6 +590,7 @@ class esn(object):
 		"W_out":self.W_out,
 		"W_in":self.W_in,
 		"W_h":self.W_h,
+		"gamma":self.gamma,
 		"scaler":self.scaler,
 		}
 		data_path = self.saving_path + self.model_dir + self.model_name + "/data.pickle"

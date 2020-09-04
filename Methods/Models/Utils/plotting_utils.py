@@ -8,6 +8,7 @@ import numpy as np
 import socket
 
 # Plotting parameters
+import pdb
 import matplotlib
 hostname = socket.gethostname()
 print("PLOTTING HOSTNAME: {:}".format(hostname))
@@ -89,14 +90,55 @@ def plotAttractor(model, set_name, latent_states, ic_idx):
 
 
 
-def plotIterativePrediction(model, set_name, target, prediction, error, nerror, ic_idx, dt, truth_augment=None, prediction_augment=None, warm_up=None, latent_states=None):
+def plotIterativePrediction(model, set_name, target, prediction, error, nerror, ic_idx, dt, truth_augment=None, prediction_augment=None, hidden=None, hidden_augment=None, warm_up=None, latent_states=None):
 
 
     if latent_states is not None:
         plotAttractor(model, set_name, latent_states, ic_idx)
 
+    if hidden_augment is not None:
+        fontsize = 12
+        vmin = hidden_augment.min()
+        vmax = hidden_augment.max()
+        # Plotting the contour plot
+        fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+        axes = [axes]
+        # fig.subplots_adjust(hspace=0.4, wspace = 0.4)
+        # axes[1].set_ylabel(r"Time $t$", fontsize=fontsize)
+        axes[0].set_xlabel(r"Time $t$", fontsize=fontsize)
+        axes[0].set_ylabel(r"State $h$", fontsize=fontsize)
+        # createContour_(fig, axes[1], hidden_augment, "Hidden", fontsize, vmin, vmax, plt.get_cmap("seismic"), dt)
+
+        n_times, n_hidden = hidden_augment.shape
+        fig_path = model.saving_path + model.fig_dir + model.model_name + "/hidden_augment_{:}_{:}.png".format(set_name, ic_idx)
+        for n in range(n_hidden):
+            axes[0].plot(np.arange(n_times)*dt, hidden_augment[:,n])
+        axes[0].plot(np.ones((100,1))*warm_up*dt, np.linspace(np.min(hidden_augment[:,0]), np.max(hidden_augment[:,0]), 100), 'g--', linewidth = 2.0, label='warm-up')
+        plt.savefig(fig_path)
+        plt.close()
+
+    if hidden is not None:
+        fontsize = 12
+        vmin = hidden.min()
+        vmax = hidden.max()
+        # Plotting the contour plot
+        fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+        axes = [axes]
+        # fig.subplots_adjust(hspace=0.4, wspace = 0.4)
+        # axes[1].set_ylabel(r"Time $t$", fontsize=fontsize)
+        axes[0].set_xlabel(r"Time $t$", fontsize=fontsize)
+        axes[0].set_ylabel(r"State $h$", fontsize=fontsize)
+        # createContour_(fig, axes[1], hidden, "Hidden", fontsize, vmin, vmax, plt.get_cmap("seismic"), dt)
+
+        n_times, n_hidden = hidden.shape
+        fig_path = model.saving_path + model.fig_dir + model.model_name + "/hidden_{:}_{:}.png".format(set_name, ic_idx)
+        for n in range(n_hidden):
+            axes[0].plot(np.arange(n_times)*dt, hidden[:,n])
+        plt.savefig(fig_path)
+        plt.close()
+
     if ((truth_augment is not None) and (prediction_augment is not None)):
-        fig_path = model.saving_path + model.fig_dir + model.model_name + "/prediction_augmend_{:}_{:}.png".format(set_name, ic_idx)
+        fig_path = model.saving_path + model.fig_dir + model.model_name + "/prediction_augment_{:}_{:}.png".format(set_name, ic_idx)
         plt.plot(np.arange(np.shape(prediction_augment)[0]), prediction_augment[:,0], 'b', linewidth = 2.0, label='output')
         plt.plot(np.arange(np.shape(truth_augment)[0]), truth_augment[:,0], 'r', linewidth = 2.0, label='target')
         plt.plot(np.ones((100,1))*warm_up, np.linspace(np.min(truth_augment[:,0]), np.max(truth_augment[:,0]), 100), 'g--', linewidth = 2.0, label='warm-up')
@@ -172,9 +214,3 @@ def plotSpectrum(model, sp_true, sp_pred, freq_true, freq_pred, set_name):
     plt.legend(loc="lower right")
     plt.savefig(fig_path)
     plt.close()
-
-
-
-
-
-
