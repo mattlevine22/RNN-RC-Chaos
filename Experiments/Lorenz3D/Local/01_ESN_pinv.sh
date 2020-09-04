@@ -7,7 +7,7 @@ cd ../../../Methods
 python3 RUN.py esn \
 --euler_hidden 1 \
 --euler_output 1 \
---gamma 0.1 \
+--gamma 0.001 \
 --mode all \
 --display_output 1 \
 --system_name Lorenz3D \
