@@ -138,13 +138,14 @@ def plotIterativePrediction(model, set_name, target, prediction, error, nerror, 
         plt.close()
 
     if ((truth_augment is not None) and (prediction_augment is not None)):
-        fig_path = model.saving_path + model.fig_dir + model.model_name + "/prediction_augment_{:}_{:}.png".format(set_name, ic_idx)
-        plt.plot(np.arange(np.shape(prediction_augment)[0]), prediction_augment[:,0], 'b', linewidth = 2.0, label='output')
-        plt.plot(np.arange(np.shape(truth_augment)[0]), truth_augment[:,0], 'r', linewidth = 2.0, label='target')
-        plt.plot(np.ones((100,1))*warm_up, np.linspace(np.min(truth_augment[:,0]), np.max(truth_augment[:,0]), 100), 'g--', linewidth = 2.0, label='warm-up')
-        plt.legend(loc="lower right")
-        plt.savefig(fig_path)
-        plt.close()
+        for state_idx in range(prediction_augment.shape[1]):
+            fig_path = model.saving_path + model.fig_dir + model.model_name + "/prediction_augment_{:}_{:}_state{:}.png".format(set_name, ic_idx, state_idx)
+            plt.plot(np.arange(np.shape(prediction_augment)[0]), prediction_augment[:,state_idx], 'b', linewidth = 2.0, label='output')
+            plt.plot(np.arange(np.shape(truth_augment)[0]), truth_augment[:,state_idx], 'r', linewidth = 2.0, label='target')
+            plt.plot(np.ones((100,1))*warm_up, np.linspace(np.min(truth_augment[:,state_idx]), np.max(truth_augment[:,state_idx]), 100), 'g--', linewidth = 2.0, label='warm-up')
+            plt.legend(loc="lower right")
+            plt.savefig(fig_path)
+            plt.close()
 
     fig_path = model.saving_path + model.fig_dir + model.model_name + "/prediction_{:}_{:}.png".format(set_name, ic_idx)
     plt.plot(prediction, 'r--', label='prediction')

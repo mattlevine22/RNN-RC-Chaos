@@ -64,8 +64,8 @@ class esn(object):
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
 		self.dt = self.get_dt()
-		self.euler_hidden = params["euler_hidden"]
-		self.euler_output = params["euler_output"]
+		self.hidden_dynamics = params["hidden_dynamics"]
+		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
@@ -90,8 +90,8 @@ class esn(object):
 		'regularization':'REG',
 		#'num_test_ICS':'NICS',
 		'worker_id':'WID',
-		'euler_hidden': 'EulerHid',
-		'euler_output': 'EulerOut',
+		'hidden_dynamics': 'HD',
+		'output_dynamics': 'OD',
 		'gamma': 'GAM'
 		}
 		return keys
@@ -179,11 +179,12 @@ class esn(object):
 		q = int(self.reservoir_size/input_dim)
 		for i in range(0, input_dim):
 			W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
-		if self.euler_output:
-			W_in = W_in / dt
+		# if self.output_dynamics:
+		# 	W_in = W_in / dt
 
 		# Set the diffusion term
 		gammaI = self.gamma * sparse.eye(self.reservoir_size)
+		I = sparse.eye(self.reservoir_size)
 
 		# TRAINING LENGTH
 		tl = N - dynamics_length
@@ -195,8 +196,10 @@ class esn(object):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			# H_dyn[t] = self.augmentHidden(h)
@@ -221,19 +224,22 @@ class esn(object):
 
 		print("TRAINING: Teacher forcing...")
 
-		matt_offset = 1 + self.euler_output
+		matt_offset = 1 + self.output_dynamics
 		for t in range(tl - matt_offset):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
+
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
-			if self.euler_output:
+			if self.output_dynamics:
 				target = (np.reshape(train_input_sequence[t+dynamics_length+2], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))) / self.dt
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
@@ -320,6 +326,7 @@ class esn(object):
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
 		gammaI = self.gamma * sparse.eye(self.reservoir_size)
+		I = sparse.eye(self.reservoir_size)
 
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
@@ -333,11 +340,13 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
-			if self.euler_output:
+			if self.output_dynamics:
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			else:
 				out = W_out @ self.augmentHidden(h)
@@ -352,15 +361,17 @@ class esn(object):
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			if self.euler_output:
+			if self.output_dynamics:
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
 			hidden.append(h)
 			i = out
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
@@ -387,6 +398,7 @@ class esn(object):
 		self.reservoir_size, _ = np.shape(W_h)
 		N = np.shape(input_sequence)[0]
 		gammaI = self.gamma * sparse.eye(self.reservoir_size)
+		I = sparse.eye(self.reservoir_size)
 
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
@@ -396,8 +408,10 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = ()(W_h-W_h.T - gammaI) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
@@ -410,7 +424,7 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
-			if self.euler_output:
+			if self.output_dynamics:
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			else:
 				out = W_out @ self.augmentHidden(h)
@@ -419,8 +433,10 @@ class esn(object):
 			# TEACHER FORCING
 			i = np.reshape(input_sequence[t], (-1,1))
 			# i = out
-			if self.euler_hidden:
+			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			elif self.hidden_dynamics=='LARNN':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 
