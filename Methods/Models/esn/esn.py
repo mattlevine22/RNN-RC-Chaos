@@ -185,6 +185,12 @@ class esn(object):
 		# Set the diffusion term
 		gammaI = self.gamma * sparse.eye(self.reservoir_size)
 		I = sparse.eye(self.reservoir_size)
+		Winv_backward = None
+		Winv_midpoint = None
+		if self.hidden_dynamics=='LARNN_backward':
+			Winv_backward = splinalg.inv(I - self.dt*(W_h-W_h.T))
+		elif self.hidden_dynamics=='LARNN_midpoint':
+			Winv_midpoint = splinalg.inv(I - self.dt*(W_h-W_h.T)/2)
 
 		# TRAINING LENGTH
 		tl = N - dynamics_length
@@ -198,8 +204,12 @@ class esn(object):
 			i = np.reshape(train_input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
+			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			# H_dyn[t] = self.augmentHidden(h)
@@ -231,8 +241,12 @@ class esn(object):
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
+			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 
@@ -299,6 +313,8 @@ class esn(object):
 		self.W_in = W_in
 		self.W_h = W_h
 		self.W_out = W_out
+		self.Winv_backward = Winv_backward
+		self.Winv_midpoint = Winv_midpoint
 
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out)
@@ -320,6 +336,8 @@ class esn(object):
 		W_h = self.W_h
 		W_out = self.W_out
 		W_in = self.W_in
+		Winv_backward = self.Winv_backward
+		Winv_midpoint = self.Winv_midpoint
 		dynamics_length = self.dynamics_length
 		iterative_prediction_length = self.iterative_prediction_length
 
@@ -342,8 +360,12 @@ class esn(object):
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
+			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			if self.output_dynamics:
@@ -370,8 +392,12 @@ class esn(object):
 			i = out
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
+			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
@@ -392,6 +418,8 @@ class esn(object):
 		W_h = self.W_h
 		W_out = self.W_out
 		W_in = self.W_in
+		Winv_backward = self.Winv_backward
+		Winv_midpoint = self.Winv_midpoint
 		dynamics_length = self.dynamics_length
 		iterative_prediction_length = self.iterative_prediction_length
 
@@ -435,8 +463,12 @@ class esn(object):
 			# i = out
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
+			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 
@@ -574,6 +606,8 @@ class esn(object):
 				self.W_out = data["W_out"]
 				self.W_in = data["W_in"]
 				self.W_h = data["W_h"]
+				self.Winv_backward = data["Winv_backward"]
+				self.Winv_midpoint = data["Winv_backward"]
 				self.gamma = data["gamma"]
 				self.scaler = data["scaler"]
 				del data
@@ -606,6 +640,8 @@ class esn(object):
 		"W_out":self.W_out,
 		"W_in":self.W_in,
 		"W_h":self.W_h,
+		"Winv_backward":self.Winv_backward,
+		"Winv_midpoint":self.Winv_midpoint,
 		"gamma":self.gamma,
 		"scaler":self.scaler,
 		}
