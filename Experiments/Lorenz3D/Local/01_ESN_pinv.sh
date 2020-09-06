@@ -5,9 +5,9 @@ cd ../../../Methods
 
 
 python3 RUN.py esn \
---euler_hidden 1 \
---euler_output 1 \
---gamma 0.001 \
+--hidden_dynamics LARNN \
+--output_dynamics 0 \
+--gamma 0.0001 \
 --mode all \
 --display_output 1 \
 --system_name Lorenz3D \
@@ -17,13 +17,13 @@ python3 RUN.py esn \
 --RDIM 3 \
 --noise_level 1 \
 --scaler Standard \
---approx_reservoir_size 1000 \
+--approx_reservoir_size 2000 \
 --degree 10 \
---radius 0.9 \
+--radius 0.5 \
 --sigma_input 1 \
 --regularization 0.000001 \
---dynamics_length 200 \
---iterative_prediction_length 2000 \
+--dynamics_length 2000 \
+--iterative_prediction_length 200 \
 --num_test_ICS 1 \
 --solver pinv \
 --number_of_epochs 1000000 \
