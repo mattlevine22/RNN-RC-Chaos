@@ -438,8 +438,12 @@ class esn(object):
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN':
-				h = ()(W_h-W_h.T - gammaI) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_forward':
+				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+			elif self.hidden_dynamics=='LARNN_backward':
+				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
