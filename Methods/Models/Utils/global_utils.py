@@ -343,7 +343,6 @@ def getESNParser(parser):
 	parser.add_argument("--hidden_dynamics", help="If true (1), use Euler style recurrent dynamics. Else, (0)", type=str, default='')
 	parser.add_argument("--output_dynamics", help="If true (1), use Euler style output dynamics. Else, (0)", type=int, default=0)
 	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0)
-	parser.add_argument("--matt_bugfix", help="Slight indexing adjustment to test-mode sequence prediction", type=int, default=0)
 	return parser
 
 def getMLPParser(parser):
