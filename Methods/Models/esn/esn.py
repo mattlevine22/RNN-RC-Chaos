@@ -308,6 +308,53 @@ class esn(object):
 			ridge.fit(H, Y)
 			W_out = ridge.coef_
 
+			try:
+				## Plot ridge-regression quality
+				H = np.array(H)
+				Y = np.array(Y)
+				ridge_predict = ridge.predict(H)
+				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_{:}_{:}.png".format(set_name, ic_idx)
+				fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
+				axes[0].plot(Y[:,0], 'o', label='data')
+				axes[0].plot(ridge_predict[:,0], '+', label='Ridge Predictions')
+				axes[0].legend(loc="lower right")
+				axes[1].plot(np.linalg.norm(ridge_predict-Y,axis=1))
+				axes[1].set_title('Training Error Sequence')
+				plt.savefig(fig_path)
+				plt.close()
+
+				## Plot fitted trajectories from ridge fit
+				n_times, n_states = Y.shape
+				if self.output_dynamics:
+					ridge_predict_traj = np.zeros((n_times, n_states))
+					out = train_input_sequence[dynamics_length-1]
+					for t in range(n_times):
+						out += self.dt * W_out @ H[t,:]
+						ridge_predict_traj[t,:] = out
+				else:
+					ridge_predict_traj = ridge_predict
+				true_traj = train_input_sequence[dynamics_length:]
+
+				# pdb.set_trace() #First target: [ 0.832312   -1.15246319]
+				print('First true traj:', true_traj[0,:])
+				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_{:}_{:}.png".format(set_name, ic_idx)
+				fig, axes = plt.subplots(nrows=n_states, ncols=1,figsize=(12, 12), squeeze=False)
+				for n in range(n_states):
+					axes[n,0].plot(true_traj[:n_times,n], label='data')
+					axes[n,0].plot(ridge_predict_traj[:n_times,n], label='Ridge Predictions')
+					axes[n,0].legend(loc="lower right")
+				fig.suptitle('Training Trajectories Sequence')
+				plt.savefig(fig_path)
+				plt.close()
+			except:
+				print('Unable to plot matt extra stuff')
+
+
+
+
+
+
+
 		else:
 			raise ValueError("Undefined solver.")
 
@@ -587,6 +634,7 @@ class esn(object):
 			num_accurate_pred_005_all.append(num_accurate_pred_005)
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
+			print('First target:', target_augment[0])
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 
 		predictions_all = np.array(predictions_all)
