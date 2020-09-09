@@ -67,6 +67,7 @@ class esn(object):
 		self.hidden_dynamics = params["hidden_dynamics"]
 		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
+		self.matt_bugfix = params["matt_bugfix"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -92,7 +93,8 @@ class esn(object):
 		'worker_id':'WID',
 		'hidden_dynamics': 'HD',
 		'output_dynamics': 'OD',
-		'gamma': 'GAM'
+		'gamma': 'GAM',
+		'matt_bugfix': 'BUGFIX'
 		}
 		return keys
 
@@ -254,7 +256,7 @@ class esn(object):
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
 			if self.output_dynamics:
-				target = (np.reshape(train_input_sequence[t+dynamics_length+2], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))) / self.dt
+				target = (np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 
@@ -349,15 +351,13 @@ class esn(object):
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
-
-		out = 0
 		prediction_warm_up = []
 		hidden_warm_up = []
 		h = np.zeros((self.reservoir_size, 1))
-		for t in range(dynamics_length):
+		for t in range(1,dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
-			i = np.reshape(input_sequence[t], (-1,1))
+			i = np.reshape(input_sequence[t-1], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -369,7 +369,7 @@ class esn(object):
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			if self.output_dynamics:
-				out = out + self.dt * W_out @ self.augmentHidden(h)
+				out = i + self.dt * W_out @ self.augmentHidden(h)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
@@ -377,29 +377,57 @@ class esn(object):
 
 		print("\n")
 
-		target = input_sequence[dynamics_length:]
-		prediction = []
-		hidden = []
-		for t in range(iterative_prediction_length):
-			if self.display_output == True:
-				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			if self.output_dynamics:
-				out = out + self.dt * W_out @ self.augmentHidden(h)
-			else:
-				out = W_out @ self.augmentHidden(h)
-			prediction.append(out)
-			hidden.append(h)
-			i = out
-			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN_forward':
-				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
-			elif self.hidden_dynamics=='LARNN_backward':
-				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
-			elif self.hidden_dynamics=='LARNN_midpoint':
-				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
-			else:
-				h = np.tanh(W_h @ h + W_in @ i)
+
+		if self.matt_bugfix:
+			i = np.reshape(input_sequence[dynamics_length-1], (-1,1))
+			target = input_sequence[dynamics_length:]
+			prediction = []
+			hidden = []
+			for t in range(iterative_prediction_length):
+				if self.display_output == True:
+					print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
+				if self.output_dynamics:
+					out = out + self.dt * W_out @ self.augmentHidden(h)
+				else:
+					out = W_out @ self.augmentHidden(h)
+				prediction.append(out)
+				hidden.append(h)
+				i = out
+
+		else:
+			target = input_sequence[dynamics_length:]
+			prediction = []
+			hidden = []
+			for t in range(iterative_prediction_length):
+				if self.display_output == True:
+					print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
+				if self.output_dynamics:
+					out = out + self.dt * W_out @ self.augmentHidden(h)
+				else:
+					out = W_out @ self.augmentHidden(h)
+				prediction.append(out)
+				hidden.append(h)
+				i = out
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
 		print("\n")
 
 		prediction = np.array(prediction)[:,:,0]
@@ -509,6 +537,7 @@ class esn(object):
 			train_input_sequence = data["train_input_sequence"][:, :self.input_dim]
 			del data
 
+		training_ic_indexes = [2*self.dynamics_length]
 		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, testing_ic_indexes, dt, "TRAIN")
 
 		for var_name in getNamesInterestingVars():
