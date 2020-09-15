@@ -67,6 +67,7 @@ class esn(object):
 		self.hidden_dynamics = params["hidden_dynamics"]
 		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
+		self.lam = params["lambda"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -92,7 +93,8 @@ class esn(object):
 		'worker_id':'WID',
 		'hidden_dynamics': 'HD',
 		'output_dynamics': 'OD',
-		'gamma': 'GAM'
+		'gamma': 'GAM',
+		'lambda': 'LAM'
 		}
 		return keys
 
@@ -204,6 +206,8 @@ class esn(object):
 			i = np.reshape(train_input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':
@@ -234,13 +238,15 @@ class esn(object):
 
 		print("TRAINING: Teacher forcing...")
 
-		matt_offset = 1 + self.output_dynamics
+		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
 		for t in range(tl - matt_offset):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':
@@ -253,8 +259,10 @@ class esn(object):
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
-			if self.output_dynamics:
+			if self.output_dynamics=='simpleRHS':
 				target = (np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt
+			if self.output_dynamics=='andrewRHS':
+				target = np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / (self.dt*self.lam) )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 
@@ -311,7 +319,7 @@ class esn(object):
 				H = np.array(H)
 				Y = np.array(Y)
 				ridge_predict = ridge.predict(H)
-				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_{:}_{:}.png".format(set_name, ic_idx)
+				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
 				axes[0].plot(Y[:,0], 'o', label='data')
 				axes[0].plot(ridge_predict[:,0], '+', label='Ridge Predictions')
@@ -323,11 +331,14 @@ class esn(object):
 
 				## Plot fitted trajectories from ridge fit
 				n_times, n_states = Y.shape
-				if self.output_dynamics:
+				if self.output_dynamics in ["simpleRHS", "andrewRHS"]:
 					ridge_predict_traj = np.zeros((n_times, n_states))
 					out = train_input_sequence[dynamics_length-1]
 					for t in range(n_times):
-						out += self.dt * W_out @ H[t,:]
+						if self.output_dynamics=="simpleRHS":
+							out += self.dt * W_out @ H[t,:]
+						elif self.output_dynamics=="andrewRHS":
+							out = out - self.lam * self.dt * ( out - W_out @ H[t,:] )
 						ridge_predict_traj[t,:] = out
 				else:
 					ridge_predict_traj = ridge_predict
@@ -335,7 +346,7 @@ class esn(object):
 
 				# pdb.set_trace() #First target: [ 0.832312   -1.15246319]
 				print('First true traj:', true_traj[0,:])
-				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_{:}_{:}.png".format(set_name, ic_idx)
+				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=n_states, ncols=1,figsize=(12, 12), squeeze=False)
 				for n in range(n_states):
 					axes[n,0].plot(true_traj[:n_times,n], label='data')
@@ -405,6 +416,8 @@ class esn(object):
 			i = np.reshape(input_sequence[t-1], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':
@@ -413,8 +426,10 @@ class esn(object):
 				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
-			if self.output_dynamics:
+			if self.output_dynamics=="simpleRHS":
 				out = i + self.dt * W_out @ self.augmentHidden(h)
+			elif self.output_dynamics=="andrewRHS":
+				out = i - self.lam * self.dt * ( i - W_out @ self.augmentHidden(h) )
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
@@ -431,6 +446,8 @@ class esn(object):
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':
@@ -439,8 +456,10 @@ class esn(object):
 				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
-			if self.output_dynamics:
+			if self.output_dynamics=="simpleRHS":
 				out = out + self.dt * W_out @ self.augmentHidden(h)
+			elif self.output_dynamics=="andrewRHS":
+				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
@@ -484,6 +503,8 @@ class esn(object):
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':
@@ -502,8 +523,10 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
-			if self.output_dynamics:
+			if self.output_dynamics=="simpleRHS":
 				out = out + self.dt * W_out @ self.augmentHidden(h)
+			elif self.output_dynamics=="andrewRHS":
+				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
@@ -513,6 +536,8 @@ class esn(object):
 			# i = out
 			if self.hidden_dynamics=='ARNN':
 				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+			if self.hidden_dynamics=='naiveRNN':
+				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			elif self.hidden_dynamics=='LARNN_backward':

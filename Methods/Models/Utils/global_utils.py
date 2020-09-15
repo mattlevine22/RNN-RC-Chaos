@@ -341,8 +341,9 @@ def getESNParser(parser):
 	parser.add_argument("--reference_train_time", help="The reference train time in hours", type=float, default=24)
 	parser.add_argument("--buffer_train_time", help="The buffer train time to save the model in hours", type=float, default=0.5)
 	parser.add_argument("--hidden_dynamics", help="If true (1), use Euler style recurrent dynamics. Else, (0)", type=str, default='')
-	parser.add_argument("--output_dynamics", help="If true (1), use Euler style output dynamics. Else, (0)", type=int, default=0)
+	parser.add_argument("--output_dynamics", help="Type of dynamics on output equation", type=str, default="None")
 	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0)
+	parser.add_argument("--lambda", help="Decay term for output dynamics", type=float, default=10000)
 	return parser
 
 def getMLPParser(parser):

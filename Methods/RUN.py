@@ -62,22 +62,22 @@ def defineParser():
 
 	esn_parser = subparsers.add_parser("esn")
 	esn_parser = getESNParser(esn_parser)
-	
+
 	esn_parallel_parser = subparsers.add_parser("esn_parallel")
 	esn_parallel_parser = getESNParallelParser(esn_parallel_parser)
 
 	rnn_statefull_parser = subparsers.add_parser("rnn_statefull")
 	rnn_statefull_parser = getRNNStatefullParser(rnn_statefull_parser)
-	
+
 	rnn_statefull_parallel_parser = subparsers.add_parser("rnn_statefull_parallel")
 	rnn_statefull_parallel_parser = getRNNStatefullParallelParser(rnn_statefull_parallel_parser)
-	
+
 	mlp_parser = subparsers.add_parser("mlp")
 	mlp_parser = getMLPParser(mlp_parser)
-	
+
 	mlp_parallel_parser = subparsers.add_parser("mlp_parallel")
 	mlp_parallel_parser = getMLPParallelParser(mlp_parallel_parser)
-	
+
 	return parser
 
 def main():
@@ -103,4 +103,3 @@ def main():
 
 if __name__ == '__main__':
 	main()
-
