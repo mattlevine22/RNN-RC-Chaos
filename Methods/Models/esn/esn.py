@@ -259,12 +259,14 @@ class esn(object):
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
+			plot_offset = 0
 			if self.output_dynamics=='simpleRHS':
 				target = (np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt
 			if self.output_dynamics=='andrewRHS':
 				target = np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / (self.dt*self.lam) )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
+				plot_offset = 1
 
 			Y.append(target[:,0])
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
@@ -324,7 +326,10 @@ class esn(object):
 				axes[0].plot(Y[:,0], 'o', label='data')
 				axes[0].plot(ridge_predict[:,0], '+', label='Ridge Predictions')
 				axes[0].legend(loc="lower right")
-				axes[1].plot(np.linalg.norm(ridge_predict-Y,axis=1))
+				prediction = self.scaler.descaleData(ridge_predict)
+				target = self.scaler.descaleData(Y)
+				rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, self.scaler.data_std)
+				axes[1].plot(rmnse)
 				axes[1].set_title('Training Error Sequence')
 				plt.savefig(fig_path)
 				plt.close()
@@ -342,15 +347,16 @@ class esn(object):
 						ridge_predict_traj[t,:] = out
 				else:
 					ridge_predict_traj = ridge_predict
-				true_traj = train_input_sequence[dynamics_length:]
+
+				true_traj = train_input_sequence[(dynamics_length+plot_offset):]
 
 				# pdb.set_trace() #First target: [ 0.832312   -1.15246319]
 				print('First true traj:', true_traj[0,:])
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=n_states, ncols=1,figsize=(12, 12), squeeze=False)
 				for n in range(n_states):
-					axes[n,0].plot(true_traj[:n_times,n], label='data')
-					axes[n,0].plot(ridge_predict_traj[:n_times,n], label='Ridge Predictions')
+					axes[n,0].plot(true_traj[:n_times,n], 'o', label='data')
+					axes[n,0].plot(ridge_predict_traj[:n_times,n], '+', label='Ridge Predictions')
 					axes[n,0].legend(loc="lower right")
 				fig.suptitle('Training Trajectories Sequence')
 				plt.savefig(fig_path)
@@ -580,8 +586,8 @@ class esn(object):
 			train_input_sequence = data["train_input_sequence"][:, :self.input_dim]
 			del data
 
-		training_ic_indexes = [2*self.dynamics_length]
-		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, testing_ic_indexes, dt, "TRAIN")
+		training_ic_indexes = [2*self.dynamics_length+1]
+		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, training_ic_indexes, dt, "TRAIN")
 
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TRAIN = {:s}".format(var_name, var_name))
