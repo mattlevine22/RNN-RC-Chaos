@@ -238,7 +238,7 @@ class esn(object):
 
 		print("TRAINING: Teacher forcing...")
 
-		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
+		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS", "andrewRHSv2"])
 		for t in range(tl - matt_offset):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
@@ -259,14 +259,16 @@ class esn(object):
 			# AUGMENT THE HIDDEN STATE
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
-			plot_offset = 0
+			plot_offset = 1
 			if self.output_dynamics=='simpleRHS':
 				target = (np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt
-			if self.output_dynamics=='andrewRHS':
+			elif self.output_dynamics=='andrewRHS':
 				target = np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / (self.dt*self.lam) )
+			elif self.output_dynamics=='andrewRHSv2':
+				target = self.lam*np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
-				plot_offset = 1
+				# plot_offset = 1
 
 			Y.append(target[:,0])
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
@@ -293,6 +295,8 @@ class esn(object):
 			print("TEACHER FORCING ENDED.")
 			print(np.shape(H))
 			print(np.shape(Y))
+			print('max(H)=',np.max(H))
+			print('max(Y)=',np.max(Y))
 
 
 		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
@@ -336,14 +340,16 @@ class esn(object):
 
 				## Plot fitted trajectories from ridge fit
 				n_times, n_states = Y.shape
-				if self.output_dynamics in ["simpleRHS", "andrewRHS"]:
+				if self.output_dynamics in ["simpleRHS", "andrewRHS", "andrewRHSv2"]:
 					ridge_predict_traj = np.zeros((n_times, n_states))
-					out = train_input_sequence[dynamics_length-1]
+					out = train_input_sequence[dynamics_length]
 					for t in range(n_times):
 						if self.output_dynamics=="simpleRHS":
 							out += self.dt * W_out @ H[t,:]
 						elif self.output_dynamics=="andrewRHS":
 							out = out - self.lam * self.dt * ( out - W_out @ H[t,:] )
+						elif self.output_dynamics=="andrewRHSv2":
+							out = out + self.dt * ( W_out @ H[t,:] - self.lam*out)
 						ridge_predict_traj[t,:] = out
 				else:
 					ridge_predict_traj = ridge_predict
@@ -437,6 +443,8 @@ class esn(object):
 				out = i + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = i - self.lam * self.dt * ( i - W_out @ self.augmentHidden(h) )
+			elif self.output_dynamics=="andrewRHSv2":
+				out = i + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*i)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
@@ -467,6 +475,8 @@ class esn(object):
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
+			elif self.output_dynamics=="andrewRHSv2":
+				out = out + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*out)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
@@ -534,6 +544,8 @@ class esn(object):
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
+			elif self.output_dynamics=="andrewRHSv2":
+				out = out + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*out)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
