@@ -352,6 +352,7 @@ class esn(object):
 
 				# pdb.set_trace() #First target: [ 0.832312   -1.15246319]
 				print('First true traj:', true_traj[0,:])
+				self.first_train_vec = true_traj[0,:]
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=n_states, ncols=1,figsize=(12, 12), squeeze=False)
 				for n in range(n_states):
@@ -637,6 +638,8 @@ class esn(object):
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
 			print('First target:', target_augment[0])
+			if set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec):
+				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 
 		predictions_all = np.array(predictions_all)
@@ -693,6 +696,7 @@ class esn(object):
 				self.Winv_midpoint = data["Winv_backward"]
 				self.gamma = data["gamma"]
 				self.scaler = data["scaler"]
+				self.first_train_vec = data["first_train_vec"]
 				del data
 			return 0
 		except:
@@ -727,6 +731,7 @@ class esn(object):
 		"Winv_midpoint":self.Winv_midpoint,
 		"gamma":self.gamma,
 		"scaler":self.scaler,
+		"first_train_vec": self.first_train_vec
 		}
 		data_path = self.saving_path + self.model_dir + self.model_name + "/data.pickle"
 		with open(data_path, "wb") as file:
