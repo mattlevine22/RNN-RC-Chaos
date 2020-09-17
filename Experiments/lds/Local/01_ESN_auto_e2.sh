@@ -2,12 +2,15 @@
 
 cd ../../../Methods
 
-
+for LAM in 0.5 0.8
+do
+  for HID in 0
+  do
 python3 RUN.py esn \
---hidden_dynamics 0 \
+--hidden_dynamics $HID \
 --output_dynamics andrewRHS \
 --gamma 0 \
---lambda 10 \
+--lambda $LAM \
 --sigma_input 1 \
 --regularization 0.0000001 \
 --dynamics_length 2500 \
@@ -21,7 +24,7 @@ python3 RUN.py esn \
 --N_used 5000 \
 --mode all \
 --display_output 1 \
---scaler no \
+--scaler standard \
 --approx_reservoir_size 2000 \
 --degree 10 \
 --radius 0.8 \
@@ -30,3 +33,5 @@ python3 RUN.py esn \
 --learning_rate 0.001 \
 --reference_train_time 10 \
 --buffer_train_time 0.5
+done
+done

@@ -11,7 +11,7 @@ python3 RUN.py esn \
 --sigma_input 1 \
 --regularization 0.0000001 \
 --dynamics_length 2500 \
---iterative_prediction_length 400 \
+--iterative_prediction_length 2000 \
 --solver auto \
 --noise_level 0 \
 --RDIM 2 \
@@ -21,7 +21,7 @@ python3 RUN.py esn \
 --N_used 5000 \
 --mode all \
 --display_output 1 \
---scaler no \
+--scaler standard \
 --approx_reservoir_size 2000 \
 --degree 10 \
 --radius 0.8 \

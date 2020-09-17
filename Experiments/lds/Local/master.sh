@@ -37,6 +37,6 @@ cd -
 source 01_ESN_auto_e.sh
 cd -
 
-# RC: discrete reservoir, andrewRHS output (lambda=1)
+# RC: discrete reservoir, andrewRHS output (lambda sweep)
 source 01_ESN_auto_e2.sh
 cd -
