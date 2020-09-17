@@ -68,6 +68,7 @@ class esn(object):
 		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
 		self.lam = params["lambda"]
+		self.plot_matrix_spectrum = params["plot_matrix_spectrum"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -395,6 +396,30 @@ class esn(object):
 		print("SAVING MODEL...")
 		self.saveModel()
 
+		# plot matrix spectrum
+		if self.plot_matrix_spectrum:
+			if self.hidden_dynamics=='ARNN':
+				gammaI = self.gamma * sparse.eye(self.reservoir_size)
+				A = self.W_h - self.W_h.T - gammaI
+			elif self.hidden_dynamics=='naiveRNN':
+				A = self.W_h
+			elif self.hidden_dynamics=='LARNN_forward':
+				gammaI = self.gamma * sparse.eye(self.reservoir_size)
+				A = self.W_h - self.W_h.T - gammaI
+			elif self.hidden_dynamics=='LARNN_backward':
+				gammaI = self.gamma * sparse.eye(self.reservoir_size)
+				A = self.W_h - self.W_h.T - gammaI
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				gammaI = self.gamma * sparse.eye(self.reservoir_size)
+				A = self.W_h - self.W_h.T - gammaI
+			else:
+				A = self.W_h
+
+			plotMatrixSpectrum(self, A , 'A')
+			plotMatrixSpectrum(self, self.W_in, 'B')
+			plotMatrixSpectrum(self, self.W_out, 'C')
+			plotMatrixSpectrum(self, self.W_in @self.W_out, 'BC')
+
 	def isWallTimeLimit(self):
 		training_time = time.time() - self.start_time
 		if training_time > self.reference_train_time:
@@ -650,7 +675,7 @@ class esn(object):
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
 			print('First target:', target_augment[0])
-			if set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec):
+			if set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec) and self.noise_level==0:
 				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 

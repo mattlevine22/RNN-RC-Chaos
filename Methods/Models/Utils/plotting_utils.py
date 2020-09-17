@@ -6,6 +6,10 @@
 #!/usr/bin/env python
 import numpy as np
 import socket
+from scipy.linalg import svdvals, eigvals
+from scipy.sparse.linalg import svds as sparse_svds
+from scipy.sparse.linalg import eigs as sparse_eigs
+
 
 # Plotting parameters
 import pdb
@@ -215,3 +219,28 @@ def plotSpectrum(model, sp_true, sp_pred, freq_true, freq_pred, set_name):
     plt.legend(loc="lower right")
     plt.savefig(fig_path)
     plt.close()
+
+def plotMatrixSpectrum(model, A, mat_name):
+    fig_path = model.saving_path + model.fig_dir + model.model_name + "/singular_values_{:}.png".format(mat_name)
+    try:
+        s = svdvals(A)
+    except:
+        s = -np.sort(-sparse_svds(A, return_singular_vectors=False, k=min(100,min(A.shape))))
+    plt.plot(s,'o')
+    plt.ylabel(r'$\sigma$')
+    plt.title('Singular values of {:}'.format(mat_name))
+    plt.savefig(fig_path)
+    plt.close()
+
+    if A.shape[0]==A.shape[1]: #is square
+        fig_path = model.saving_path + model.fig_dir + model.model_name + "/eigenvalues_{:}.png".format(mat_name)
+        try:
+            eig = eigvals(A)
+        except:
+            eig = sparse_eigs(A, return_eigenvectors=False, k=min(1000,min(A.shape)))
+        plt.plot(eig.real, eig.imag, 'o')
+        plt.xlabel(r'Re($\lambda$)')
+        plt.ylabel(r'Im($\lambda$)')
+        plt.title('Eigenvalues of {:}'.format(mat_name))
+        plt.savefig(fig_path)
+        plt.close()

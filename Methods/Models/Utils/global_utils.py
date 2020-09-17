@@ -344,6 +344,7 @@ def getESNParser(parser):
 	parser.add_argument("--output_dynamics", help="Type of dynamics on output equation", type=str, default="None")
 	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0)
 	parser.add_argument("--lambda", help="Decay term for output dynamics", type=float, default=10000)
+	parser.add_argument("--plot_matrix_spectrum", help="boolean to compute matrix spectrums", type=int, default=0)
 	return parser
 
 def getMLPParser(parser):
