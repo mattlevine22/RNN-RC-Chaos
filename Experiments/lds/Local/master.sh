@@ -1,42 +1,40 @@
 #!/bin/bash
 
+cd ../../../Methods
 
-# RC: discrete
-source 01_ESN_auto_a.sh
-cd -
-
-# RC: naiveRNN reservoir, discrete output
-source 01_ESN_auto_b0.sh
-cd -
-
-# RC: ARNN reservoir, discrete output
-source 01_ESN_auto_b.sh
-cd -
-
-# RC: LARNN_forward reservoir, discrete output
-source 01_ESN_auto_b2.sh
-cd -
-
-# RC: LARNN_forward reservoir, andrewRHS output (lambda=1)
-source 01_ESN_auto_c.sh
-cd -
-
-# RC: LARNN_forward reservoir, simpleRHS output
-source 01_ESN_auto_c2.sh
-cd -
-
-# RC: ARNN reservoir, andrewRHS output (lambda=1), longer prediction length
-source 01_ESN_auto_d.sh
-cd -
-
-# RC: ARNN reservoir, simpleRHS output
-source 01_ESN_auto_d2.sh
-cd -
-
-# RC: discrete reservoir, simpleRHS output [SHOULD BE VERY BASIC!!!]
-source 01_ESN_auto_e.sh
-cd -
-
-# RC: discrete reservoir, andrewRHS output (lambda sweep)
-source 01_ESN_auto_e2.sh
-cd -
+for HID in 0 ARNN LARNN_forward
+do
+for OUT in 0 simpleRHS
+do
+for RDIM in 2 1
+do
+python3 RUN.py esn \
+--hidden_dynamics $HID \
+--output_dynamics $OUT \
+--gamma 0 \
+--lambda 0 \
+--sigma_input 1 \
+--regularization 0.0000001 \
+--dynamics_length 2500 \
+--iterative_prediction_length 2000 \
+--solver auto \
+--noise_level 0 \
+--RDIM 2 \
+--system_name lds \
+--write_to_log 1 \
+--N 100000 \
+--N_used 5000 \
+--mode all \
+--display_output 1 \
+--scaler standard \
+--approx_reservoir_size 2000 \
+--degree 10 \
+--radius 0.8 \
+--num_test_ICS 1 \
+--number_of_epochs 1000000 \
+--learning_rate 0.001 \
+--reference_train_time 10 \
+--buffer_train_time 0.5
+done
+done
+done
