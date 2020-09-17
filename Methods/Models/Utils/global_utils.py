@@ -345,6 +345,7 @@ def getESNParser(parser):
 	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0)
 	parser.add_argument("--lambda", help="Decay term for output dynamics", type=float, default=10000)
 	parser.add_argument("--plot_matrix_spectrum", help="boolean to compute matrix spectrums", type=int, default=0)
+	parser.add_argument("--use_tilde", help="boolean to use r-tilde even/odd squaring", type=int, default=1)
 	return parser
 
 def getMLPParser(parser):

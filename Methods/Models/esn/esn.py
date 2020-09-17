@@ -69,6 +69,7 @@ class esn(object):
 		self.gamma = params["gamma"]
 		self.lam = params["lambda"]
 		self.plot_matrix_spectrum = params["plot_matrix_spectrum"]
+		self.use_tilde = params["use_tilde"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -95,7 +96,8 @@ class esn(object):
 		'hidden_dynamics': 'HD',
 		'output_dynamics': 'OD',
 		'gamma': 'GAM',
-		'lambda': 'LAM'
+		'lambda': 'LAM',
+		'use_tilde': 'USETILDE'
 		}
 		return keys
 
@@ -127,7 +129,8 @@ class esn(object):
 		h_aug = h.copy()
 		# h_aug = pow(h_aug, 2.0)
 		# h_aug = np.concatenate((h,h_aug), axis=0)
-		h_aug[::2]=pow(h_aug[::2],2.0)
+		if self.use_tilde:
+			h_aug[::2]=pow(h_aug[::2],2.0)
 		return h_aug
 
 	def getAugmentedStateSize(self):
@@ -357,7 +360,6 @@ class esn(object):
 
 				true_traj = train_input_sequence[(dynamics_length+plot_offset):]
 
-				# pdb.set_trace() #First target: [ 0.832312   -1.15246319]
 				print('First true traj:', true_traj[0,:])
 				self.first_train_vec = true_traj[0,:]
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_TRAIN_true.png"

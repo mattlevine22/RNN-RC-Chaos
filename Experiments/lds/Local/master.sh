@@ -2,13 +2,16 @@
 
 cd ../../../Methods
 
-for HID in 0 ARNN LARNN_forward
+for TIL in 1 0
 do
-for OUT in 0 simpleRHS
+for HID in ARNN 0 LARNN_forward
+do
+for OUT in simpleRHS 0
 do
 for RDIM in 2 1
 do
 python3 RUN.py esn \
+--use_tilde $TIL \
 --hidden_dynamics $HID \
 --output_dynamics $OUT \
 --gamma 0 \
@@ -35,6 +38,7 @@ python3 RUN.py esn \
 --learning_rate 0.001 \
 --reference_train_time 10 \
 --buffer_train_time 0.5
+done
 done
 done
 done
