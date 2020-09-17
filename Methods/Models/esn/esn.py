@@ -262,11 +262,11 @@ class esn(object):
 			H.append(h_aug[:,0])
 			plot_offset = 1
 			if self.output_dynamics=='simpleRHS':
-				target = (np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt
+				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt
 			elif self.output_dynamics=='andrewRHS':
-				target = np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / (self.dt*self.lam) )
+				target = np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / (self.dt*self.lam) )
 			elif self.output_dynamics=='andrewRHSv2':
-				target = self.lam*np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length-1], (-1,1))) / self.dt )
+				target = self.lam*np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 				# plot_offset = 1
