@@ -22,7 +22,7 @@ python3 RUN.py esn \
 --iterative_prediction_length 2000 \
 --solver auto \
 --noise_level 0 \
---RDIM 2 \
+--RDIM $RDIM \
 --system_name lds \
 --write_to_log 1 \
 --N 100000 \
