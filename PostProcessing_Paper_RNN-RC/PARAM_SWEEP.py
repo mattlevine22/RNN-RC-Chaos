@@ -148,7 +148,6 @@ for model_name_key in model_test_dict:
     train_result = pickle.load(open(train_file, "rb" ))
     scaler = train_result["scaler"]
     num_ics_deviating, num_ics_not_deviating = getNumberOfDivergentTrajectories(truths_all, predictions_all, scaler.data_std)
-
     new_dict = {key: val_result[key] for key in keep_keys}
     splitlist = model_name_key.split()
     for token in param_list:
@@ -158,13 +157,13 @@ for model_name_key in model_test_dict:
             pdb.set_trace()
     new_dict['name'] = model_name_key
     new_dict['t_valid'] = new_dict[NUM_ACC_PRED_STR]*dt
-
+    new_dict['num_ics_deviating'] = num_ics_deviating
     master_list_of_dicts.append(new_dict)
 
 df = pd.DataFrame(master_list_of_dicts)
 
 df = df[(df['HD']=='ARNN') & (df['OD']=='simpleRHS')]
 
-eval_keys = keep_keys + ['t_valid']
+eval_keys = keep_keys + ['t_valid', 'num_ics_deviating']
 for eval_type in eval_keys:
     plotHyperparamContour(df.sort_values(by=['SIGMA','GAM']), fig_path=os.path.join(fig_path,'sigma_vs_gamma' + eval_type), xkey='SIGMA', ykey='GAM', zkey=eval_type)

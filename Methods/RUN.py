@@ -99,6 +99,7 @@ def main():
 	args_dict["test_data_path"] = global_params.testing_data_path.format(args.system_name, args.N)
 	args_dict["worker_id"] = 0
 
+	print('Running', args_dict["saving_path"])
 	runModel(args_dict)
 
 if __name__ == '__main__':

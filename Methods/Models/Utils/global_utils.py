@@ -8,6 +8,7 @@ import numpy as np
 import pickle
 import io
 import os
+import pdb
 
 def getNamesInterestingVars():
 	# THE MODEL SHOULD OUTPUT THE FOLLOWING VARIABLES:
