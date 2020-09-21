@@ -244,3 +244,13 @@ def plotMatrixSpectrum(model, A, mat_name):
         plt.title('Eigenvalues of {:}'.format(mat_name))
         plt.savefig(fig_path)
         plt.close()
+
+def plotHyperparamContour(df, fig_path, xkey=None, ykey=None, zkey=None):
+    fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(6, 6))
+    sc = ax.scatter(df[xkey], df[ykey], c=df[zkey])
+    ax.set_xlabel(xkey)
+    ax.set_ylabel(ykey)
+    ax.set_title(zkey)
+    plt.colorbar(sc)
+    plt.savefig(fig_path)
+    plt.close()
