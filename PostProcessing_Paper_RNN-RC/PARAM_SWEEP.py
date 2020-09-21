@@ -154,7 +154,7 @@ for model_name_key in model_test_dict:
         try:
             new_dict[token] = stripVal(str=model_name_key, token=token)
         except:
-            pdb.set_trace()
+            raise ValueError('Cant find token ({token}) in directory name {nm}'.format(token=token, nm=model_name_key))
     new_dict['name'] = model_name_key
     new_dict['t_valid'] = new_dict[NUM_ACC_PRED_STR]*dt
     new_dict['num_ics_deviating'] = num_ics_deviating

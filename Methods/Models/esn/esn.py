@@ -147,8 +147,7 @@ class esn(object):
 
 	def train(self):
 		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
-			print('Model has already run for this configuration. Exiting with an error.')
-			raise
+			raise ValueError('Model has already run for this configuration. Exiting with an error.')
 		self.start_time = time.time()
 		dynamics_length = self.dynamics_length
 		input_dim = self.input_dim
