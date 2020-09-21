@@ -70,6 +70,7 @@ class esn(object):
 		self.lam = params["lambda"]
 		self.plot_matrix_spectrum = params["plot_matrix_spectrum"]
 		self.use_tilde = params["use_tilde"]
+		self.dont_redo = params["dont_redo"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -145,6 +146,9 @@ class esn(object):
 	#     return 2*self.reservoir_size
 
 	def train(self):
+		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
+			print('Model has already run for this configuration. Exiting with an error.')
+			raise
 		self.start_time = time.time()
 		dynamics_length = self.dynamics_length
 		input_dim = self.input_dim
@@ -626,7 +630,10 @@ class esn(object):
 			train_input_sequence = data["train_input_sequence"][:, :self.input_dim]
 			del data
 
-		training_ic_indexes = [2*self.dynamics_length+1]
+		if num_test_ICS==1:
+			training_ic_indexes = [2*self.dynamics_length+1]
+		else:
+			training_ic_indexes = testing_ic_indexes
 		rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, training_ic_indexes, dt, "TRAIN")
 
 		for var_name in getNamesInterestingVars():
@@ -677,7 +684,7 @@ class esn(object):
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
 			print('First target:', target_augment[0])
-			if set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec) and self.noise_level==0:
+			if num_test_ICS==1 and set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec) and self.noise_level==0:
 				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 
