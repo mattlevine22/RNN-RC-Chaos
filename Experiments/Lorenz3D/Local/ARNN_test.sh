@@ -10,9 +10,9 @@ for HID in ARNN
 do
 for OUT in simpleRHS
 do
-for SIG in 0.1 0.75 1 2 5 10
+for SIG in 2 3.5 5 7.5 10
 do
-for GAM in 0 1 10 15 25 50
+for GAM in 2 5 10 15 20 25
 do
 python3 RUN.py esn \
 --dont_redo 1 \
@@ -38,7 +38,7 @@ python3 RUN.py esn \
 --approx_reservoir_size 2000 \
 --degree 10 \
 --radius 0.6 \
---num_test_ICS 1 \
+--num_test_ICS 3 \
 --number_of_epochs 1000000 \
 --learning_rate 0.001 \
 --reference_train_time 10 \
