@@ -245,7 +245,7 @@ class esn(object):
 
 		print("TRAINING: Teacher forcing...")
 
-		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS", "andrewRHSv2"])
+		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
 		for t in range(tl - matt_offset):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
@@ -271,8 +271,6 @@ class esn(object):
 				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt
 			elif self.output_dynamics=='andrewRHS':
 				target = np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / (self.dt*self.lam) )
-			elif self.output_dynamics=='andrewRHSv2':
-				target = self.lam*np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 				# plot_offset = 1
@@ -347,7 +345,7 @@ class esn(object):
 
 				## Plot fitted trajectories from ridge fit
 				n_times, n_states = Y.shape
-				if self.output_dynamics in ["simpleRHS", "andrewRHS", "andrewRHSv2"]:
+				if self.output_dynamics in ["simpleRHS", "andrewRHS"]:
 					ridge_predict_traj = np.zeros((n_times, n_states))
 					out = train_input_sequence[dynamics_length]
 					for t in range(n_times):
@@ -355,8 +353,6 @@ class esn(object):
 							out += self.dt * W_out @ H[t,:]
 						elif self.output_dynamics=="andrewRHS":
 							out = out - self.lam * self.dt * ( out - W_out @ H[t,:] )
-						elif self.output_dynamics=="andrewRHSv2":
-							out = out + self.dt * ( W_out @ H[t,:] - self.lam*out)
 						ridge_predict_traj[t,:] = out
 				else:
 					ridge_predict_traj = ridge_predict
@@ -473,8 +469,6 @@ class esn(object):
 				out = i + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = i - self.lam * self.dt * ( i - W_out @ self.augmentHidden(h) )
-			elif self.output_dynamics=="andrewRHSv2":
-				out = i + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*i)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction_warm_up.append(out)
@@ -505,8 +499,6 @@ class esn(object):
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
-			elif self.output_dynamics=="andrewRHSv2":
-				out = out + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*out)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
@@ -574,8 +566,6 @@ class esn(object):
 				out = out + self.dt * W_out @ self.augmentHidden(h)
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
-			elif self.output_dynamics=="andrewRHSv2":
-				out = out + self.dt * ( W_out @ self.augmentHidden(h) - self.lam*out)
 			else:
 				out = W_out @ self.augmentHidden(h)
 			prediction.append(out)
