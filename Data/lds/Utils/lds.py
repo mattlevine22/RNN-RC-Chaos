@@ -5,6 +5,6 @@
 """
 import numpy as np
 
-def lds(t0, u0, A):
+def lds(t0, u0, A=np.array([[0, 5],[-5,0]])):
     dudt = A @ u0
     return dudt

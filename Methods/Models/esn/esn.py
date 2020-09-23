@@ -23,6 +23,20 @@ print = partial(print, flush=True)
 
 from sklearn.linear_model import Ridge
 
+#MATT hacking in ODE SOLVER
+import os,sys,inspect
+# pdb.set_trace()
+# current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+base_dir = '/Users/matthewlevine/code_projects/RNN-RC-Chaos'
+lorenz_dir = os.path.join(base_dir, "Data/Lorenz3D/Utils")
+sys.path.insert(0, lorenz_dir)
+from lorenz3D import lorenz
+lds_dir = os.path.join(base_dir,"Data/lds/Utils")
+sys.path.insert(0, lds_dir)
+from lds import lds
+
+
+
 # MEMORY TRACKING
 import psutil
 
@@ -98,7 +112,8 @@ class esn(object):
 		'output_dynamics': 'OD',
 		'gamma': 'GAM',
 		'lambda': 'LAM',
-		'use_tilde': 'USETILDE'
+		'use_tilde': 'USETILDE',
+		'scaler': 'SCALER'
 		}
 		return keys
 
@@ -242,6 +257,7 @@ class esn(object):
 			YTH = np.zeros((input_dim, self.getAugmentedStateSize()))
 		H = []
 		Y = []
+		Y_true = []
 
 		print("TRAINING: Teacher forcing...")
 
@@ -267,9 +283,19 @@ class esn(object):
 			h_aug = self.augmentHidden(h)
 			H.append(h_aug[:,0])
 			plot_offset = 1
+
 			if self.output_dynamics=='simpleRHS':
+				# FORWARD DIFFERENCE---infer derivative at time t+dl
 				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt
+				u0 = self.scaler.descaleData(train_input_sequence[t+dynamics_length])
+				try:
+					true_derivative = lorenz(t0=0, u0=u0)
+					Y_true.append(true_derivative)
+				except:
+					# fails when RDIM is not full state space
+					pass
 			elif self.output_dynamics=='andrewRHS':
+				# FORWARD DIFFERENCE
 				target = np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / (self.dt*self.lam) )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
@@ -329,19 +355,37 @@ class esn(object):
 				## Plot ridge-regression quality
 				H = np.array(H)
 				Y = np.array(Y)
+				Y_true = np.array(Y_true)
 				ridge_predict = ridge.predict(H)
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_TRAIN_true.png"
-				fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
-				axes[0].plot(Y[:,0], 'o', label='data')
-				axes[0].plot(ridge_predict[:,0], '+', label='Ridge Predictions')
-				axes[0].legend(loc="lower right")
+				fig, axes = plt.subplots(nrows=1, ncols=1+Y.shape[1],figsize=(5*(1+Y.shape[1]), 6))
+				for ax_ind in range(Y.shape[1]):
+					axes[ax_ind].plot(Y[:,ax_ind], 'o', color='green', label='data')
+					axes[ax_ind].plot(ridge_predict[:,ax_ind], '+', color='magenta', label='Ridge Predictions')
+					axes[ax_ind].legend(loc="lower right")
 				prediction = self.scaler.descaleData(ridge_predict)
 				target = self.scaler.descaleData(Y)
 				rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, self.scaler.data_std)
-				axes[1].plot(rmnse)
-				axes[1].set_title('Training Error Sequence')
+				axes[-1].plot(rmnse)
+				axes[-1].set_title('Training Error Sequence')
 				plt.savefig(fig_path)
 				plt.close()
+
+				# Plot quality of forward-difference
+				try:
+					if self.output_dynamics=='simpleRHS':
+						fig_path = self.saving_path + self.fig_dir + self.model_name + "/forward_difference_eval.png"
+						fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
+						axes[0].plot(np.linalg.norm(Y - Y_true, axis=1))
+						axes[0].set_title('MSE sequence')
+						axes[1].plot(np.sum(Y - Y_true, axis=1))
+						axes[1].set_title('Absolute Error sequence')
+						fig.suptitle('Forward-Difference Evaluation')
+						plt.savefig(fig_path)
+						plt.close()
+				except:
+					# fails when RDIM is not full state space
+					pass
 
 				## Plot fitted trajectories from ridge fit
 				n_times, n_states = Y.shape
