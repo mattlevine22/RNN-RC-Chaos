@@ -341,6 +341,7 @@ def getESNParser(parser):
 	parser.add_argument("--solver", help="solver used to learn mapping H -> Y, it can be [pinv, saga, gd]", type=str, required=False, default="pinv")
 	parser.add_argument("--reference_train_time", help="The reference train time in hours", type=float, default=24)
 	parser.add_argument("--buffer_train_time", help="The buffer train time to save the model in hours", type=float, default=0.5)
+	parser.add_argument("--use_tilde", help="boolean to determine whether or not to use the r-tilde squaring trick", type=int, default=1)
 
 	return parser
 

@@ -87,6 +87,8 @@ class esn_parallel(object):
         self.noise_level = params["noise_level"]
         self.model_name = self.createModelName(params)
 
+        self.use_tilde = params["use_tilde"]
+
         # MASTER RANK CREATING DIRECTORIES
         if rank==0:
             os.makedirs(self.saving_path + self.model_dir + self.model_name, exist_ok=True)
@@ -116,10 +118,11 @@ class esn_parallel(object):
         'iterative_prediction_length':'IPL',
         'regularization':'REG',
         #'num_test_ICS':'NICS',
-        'num_parallel_groups':'NG', 
-        'parallel_group_size':'GS', 
-        'parallel_group_interaction_length':'GIL', 
-        # 'worker_id':'WID', 
+        'num_parallel_groups':'NG',
+        'parallel_group_size':'GS',
+        'parallel_group_interaction_length':'GIL',
+		'use_tilde': 'USETILDE'
+        # 'worker_id':'WID',
         }
         return keys
 
@@ -150,8 +153,10 @@ class esn_parallel(object):
         h_aug = h.copy()
         # h_aug = pow(h_aug, 2.0)
         # h_aug = np.concatenate((h,h_aug), axis=0)
-        h_aug[::2]=pow(h_aug[::2],2.0)
+        if self.use_tilde:
+            h_aug[::2]=pow(h_aug[::2],2.0)
         return h_aug
+
     def getAugmentedStateSize(self):
         return self.reservoir_size
 

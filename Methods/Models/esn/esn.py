@@ -59,6 +59,7 @@ class esn(object):
 		self.learning_rate = params["learning_rate"]
 		self.number_of_epochs = params["number_of_epochs"]
 		self.solver = str(params["solver"])
+		self.use_tilde = params["use_tilde"]
 		##########################################
 		self.scaler = scaler(self.scaler_tt)
 		self.noise_level = params["noise_level"]
@@ -85,7 +86,8 @@ class esn(object):
 		'iterative_prediction_length':'IPL',
 		'regularization':'REG',
 		#'num_test_ICS':'NICS',
-		'worker_id':'WID', 
+		'worker_id':'WID',
+		'use_tilde': 'USETILDE'
 		}
 		return keys
 
@@ -117,7 +119,8 @@ class esn(object):
 		h_aug = h.copy()
 		# h_aug = pow(h_aug, 2.0)
 		# h_aug = np.concatenate((h,h_aug), axis=0)
-		h_aug[::2]=pow(h_aug[::2],2.0)
+		if self.use_tilde:
+			h_aug[::2]=pow(h_aug[::2],2.0)
 		return h_aug
 
 	def getAugmentedStateSize(self): 
