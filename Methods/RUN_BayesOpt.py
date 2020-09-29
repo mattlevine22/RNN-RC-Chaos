@@ -13,6 +13,11 @@ from global_utils import *
 
 import argparse
 import pdb
+import sys
+try:
+	sys.path.insert(0, './BayesianOptimization')
+except:
+	pass
 from bayes_opt import BayesianOptimization
 from bayes_opt.logger import JSONLogger
 from bayes_opt.event import Events
@@ -127,10 +132,12 @@ def main():
 	try:
 		load_logs(optimizer, logs=[log_path]);
 	except:
-		pdb.set_trace()
 		print('unable to load old BayesOpt logs')
 		pass
-	logger = JSONLogger(path=log_path, reset=False)
+	try:
+		logger = JSONLogger(path=log_path, reset=False)
+	except:
+		logger = JSONLogger(path=log_path) #conda version doesnt have RESET feature
 	optimizer.subscribe(Events.OPTIMIZATION_STEP, logger)
 
 	# optimizer.probe(
@@ -162,16 +169,14 @@ def main():
 
 	optimizer.maximize(
 	    init_points=1,
-	    n_iter=3
+	    n_iter=100
 	)
 
 
-
-	for i, res in enumerate(optimizer.res):
-	    print("Iteration {}: \n\t{}".format(i, res))
+	# for i, res in enumerate(optimizer.res):
+	#     print("Iteration {}: \n\t{}".format(i, res))
 
 	print("MAX",optimizer.max)
-	pdb.set_trace()
 
 if __name__ == '__main__':
 	main()
