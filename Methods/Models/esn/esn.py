@@ -326,9 +326,17 @@ class esn(object):
 			print("TEACHER FORCING ENDED.")
 			print(np.shape(H))
 			print(np.shape(Y))
-			print('max(H)=',np.max(H))
-			print('max(Y)=',np.max(Y))
+			print('\nmax(H)=',np.max(H))
+			print('mean(H)=',np.mean(H))
+			print('std(H)=',np.std(H))
 
+			print('\nmax(x)=',np.max(train_input_sequence))
+			print('mean(x)=',np.mean(train_input_sequence))
+			print('std(x)=',np.std(train_input_sequence))
+
+			print('\nmax(Y)=',np.max(Y))
+			print('mean(Y)=',np.mean(Y))
+			print('std(Y)=',np.std(Y))
 
 		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
 
@@ -748,6 +756,7 @@ class esn(object):
 
 		if self.write_to_log == 1:
 			logfile_test = self.saving_path + self.logfile_dir + self.model_name  + "/test.txt"
+			self.results_logfile_path = logfile_test
 			writeToTestLogFile(logfile_test, self)
 
 		data = {}
@@ -757,6 +766,8 @@ class esn(object):
 		data["model_name"] = self.model_name
 		data["num_test_ICS"] = self.num_test_ICS
 		data_path = self.saving_path + self.results_dir + self.model_name + "/results.pickle"
+		self.results_pickle_path = data_path
+		self.results_data = data
 		with open(data_path, "wb") as file:
 			# Pickle the "data" dictionary using the highest protocol available.
 			pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
