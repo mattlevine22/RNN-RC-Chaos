@@ -124,12 +124,20 @@ def addNoise(data, percent):
 	return data
 
 class scaler(object):
-	def __init__(self, tt):
+	def __init__(self, tt, tt_derivative):
 		self.tt = tt
 		self.data_min = 0
 		self.data_max = 0
 		self.data_mean = 0
 		self.data_std = 0
+
+		# scale derivatives
+		self.tt_derivative = tt_derivative
+		self.derivative_min = 0
+		self.derivative_max = 0
+		self.derivative_mean = 0
+		self.derivative_std = 0
+
 
 	def scaleData(self, input_sequence, reuse=None):
 		# data_mean = np.mean(train_input_sequence,0)
@@ -140,10 +148,25 @@ class scaler(object):
 			self.data_std = np.std(input_sequence,0)
 			self.data_min = np.min(input_sequence,0)
 			self.data_max = np.max(input_sequence,0)
+
+			if self.tt in ["Standard2", "standard2"]:
+				self.data_mean = np.mean(self.data_mean)
+				self.data_std = np.std(self.data_std)
+				self.data_min = np.min(self.data_min)
+				self.data_max = np.max(self.data_max)
+			if self.tt in ["Standard3", "standard3"]:
+				self.data_std = np.std(self.data_std)
+				self.data_min = np.min(self.data_min)
+				self.data_max = np.max(self.data_max)
+
 		if self.tt == "MinMaxZeroOne":
 			input_sequence = np.array((input_sequence-self.data_min)/(self.data_max-self.data_min))
-		elif self.tt == "Standard" or self.tt == "standard":
+		elif self.tt in ["Standard", "standard", "Standard2", "standard2", "Standard3", "standard3"]:
 			input_sequence = np.array((input_sequence-self.data_mean)/self.data_std)
+		elif self.tt == "meanOnly":
+			input_sequence = np.array(input_sequence-self.data_mean)
+		elif self.tt == "stdOnly":
+			input_sequence = np.array(input_sequence/self.data_std)
 		elif self.tt != "no":
 			raise ValueError("Scaler not implemented.")
 		return input_sequence
@@ -151,11 +174,54 @@ class scaler(object):
 	def descaleData(self, input_sequence):
 		if self.tt == "MinMaxZeroOne":
 			input_sequence = np.array(input_sequence*(self.data_max - self.data_min) + self.data_min)
-		elif self.tt == "Standard" or self.tt == "standard":
+		elif self.tt in ["Standard", "standard", "Standard2", "standard2", "Standard3", "standard3"]:
 			input_sequence = np.array(input_sequence*self.data_std.T + self.data_mean)
+		elif self.tt == "meanOnly":
+			input_sequence = np.array(input_sequence+self.data_mean)
+		elif self.tt == "stdOnly":
+			input_sequence = np.array(input_sequence*self.data_std.T)
 		elif self.tt != "no":
 			raise ValueError("Scaler not implemented.")
 		return input_sequence
+
+	def scaleDerivatives(self, input_sequence, reuse=None):
+		# data_mean = np.mean(train_input_sequence,0)
+		# data_std = np.std(train_input_sequence,0)
+		# train_input_sequence = (train_input_sequence-data_mean)/data_std
+		if reuse == None:
+			self.derivative_mean = np.mean(input_sequence,0)
+			self.derivative_std = np.std(input_sequence,0)
+			self.derivative_min = np.min(input_sequence,0)
+			self.derivative_max = np.max(input_sequence,0)
+		if self.tt_derivative == "MinMaxZeroOne":
+			input_sequence = np.array((input_sequence-self.derivative_min)/(self.derivative_max-self.derivative_min))
+		elif self.tt_derivative == "Standard" or self.tt_derivative == "standard":
+			input_sequence = np.array((input_sequence-self.derivative_mean)/self.derivative_std)
+		elif self.tt_derivative == "meanOnly":
+			input_sequence = np.array(input_sequence-self.derivative_mean)
+		elif self.tt_derivative == "stdOnly":
+			input_sequence = np.array(input_sequence/self.derivative_std)
+		elif self.tt_derivative == "timesStd":
+			input_sequence = np.array(input_sequence*self.data_std)
+		elif self.tt_derivative != "no":
+			raise ValueError("Scaler not implemented.")
+		return input_sequence
+
+	def descaleDerivatives(self, input_sequence):
+		if self.tt_derivative == "MinMaxZeroOne":
+			input_sequence = np.array(input_sequence*(self.derivative_max - self.derivative_min) + self.derivative_min)
+		elif self.tt_derivative == "Standard" or self.tt_derivative == "standard":
+			input_sequence = np.array(input_sequence*self.derivative_std.T + self.derivative_mean)
+		elif self.tt_derivative == "meanOnly":
+			input_sequence = np.array(input_sequence+self.derivative_mean)
+		elif self.tt_derivative == "stdOnly":
+			input_sequence = np.array(input_sequence*self.data_std.T)
+		elif self.tt_derivative == "timesStd":
+			input_sequence = np.array(input_sequence/self.derivative_std.T)
+		elif self.tt_derivative != "no":
+			raise ValueError("Scaler not implemented.")
+		return input_sequence
+
 
 	def descaleDataParallel(self, input_sequence, interaction_length):
 		# Descaling in the parallel model requires to substract the neighboring points from the scaler
@@ -348,6 +414,7 @@ def getESNParser(parser):
 	parser.add_argument("--plot_matrix_spectrum", help="boolean to compute matrix spectrums", type=int, default=0)
 	parser.add_argument("--use_tilde", help="boolean to use r-tilde even/odd squaring", type=int, default=1)
 	parser.add_argument("--dont_redo", help="boolean to check if model has already run. If so, quit. Default is to re-run and overwrite an existing trained model.", type=int, default=0)
+	parser.add_argument("--scaler_derivatives", help="scaler", type=str, default='no')
 	return parser
 
 def getMLPParser(parser):

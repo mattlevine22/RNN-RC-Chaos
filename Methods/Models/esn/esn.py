@@ -70,11 +70,12 @@ class esn(object):
 		self.saving_path = params["saving_path"]
 		self.regularization = params["regularization"]
 		self.scaler_tt = params["scaler"]
+		self.scaler_tt_derivatives = params["scaler_derivatives"]
 		self.learning_rate = params["learning_rate"]
 		self.number_of_epochs = params["number_of_epochs"]
 		self.solver = str(params["solver"])
 		##########################################
-		self.scaler = scaler(self.scaler_tt)
+		self.scaler = scaler(tt=self.scaler_tt, tt_derivative=self.scaler_tt_derivatives)
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
 		self.dt = self.get_dt()
@@ -113,7 +114,8 @@ class esn(object):
 		'gamma': 'GAM',
 		'lambda': 'LAM',
 		'use_tilde': 'USETILDE',
-		'scaler': 'SCALER'
+		'scaler': 'SCALER',
+		'scaler_derivatives': 'DSCALER'
 		}
 		return keys
 
@@ -352,6 +354,14 @@ class esn(object):
 			"""
 			Learns mapping H -> Y with Ridge Regression
 			"""
+			Y = np.array(Y)
+			if self.output_dynamics=='simpleRHS':
+				Y = self.scaler.scaleDerivatives(Y)
+				print('\nmax(Y_norm)=',np.max(Y))
+				print('mean(Y_norm)=',np.mean(Y))
+				print('std(Y_norm)=',np.std(Y))
+
+
 			ridge = Ridge(alpha=self.regularization, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
 			# print(np.shape(H))
 			# print(np.shape(Y))
@@ -360,6 +370,22 @@ class esn(object):
 			W_out = ridge.coef_
 
 			try:
+				## Plot H
+				H = np.array(H)
+				fontsize = 12
+				# Plotting the contour plot
+				fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+				axes = [axes]
+				axes[0].set_xlabel(r"Time $t$", fontsize=fontsize)
+				axes[0].set_ylabel(r"State $h$", fontsize=fontsize)
+				n_times, n_hidden = H.shape
+				fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_TRAIN_raw.png"
+				for n in range(n_hidden):
+					axes[0].plot(np.arange(n_times)*self.dt, H[:,n])
+				plt.savefig(fig_path)
+				plt.close()
+
+
 				## Plot ridge-regression quality
 				H = np.array(H)
 				Y = np.array(Y)
@@ -371,9 +397,15 @@ class esn(object):
 					axes[ax_ind].plot(Y[:,ax_ind], 'o', color='green', label='data')
 					axes[ax_ind].plot(ridge_predict[:,ax_ind], '+', color='magenta', label='Ridge Predictions')
 					axes[ax_ind].legend(loc="lower right")
-				prediction = self.scaler.descaleData(ridge_predict)
-				target = self.scaler.descaleData(Y)
-				rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, self.scaler.data_std)
+				if self.output_dynamics=='simpleRHS':
+					prediction = self.scaler.descaleDerivatives(ridge_predict)
+					target = self.scaler.descaleDerivatives(Y)
+					std = self.scaler.derivative_std
+				else:
+					prediction = self.scaler.descaleData(ridge_predict)
+					target = self.scaler.descaleData(Y)
+					std = self.scaler.data_std
+				rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, std)
 				axes[-1].plot(rmnse)
 				axes[-1].set_title('Training Error Sequence')
 				plt.savefig(fig_path)
@@ -384,9 +416,15 @@ class esn(object):
 					if self.output_dynamics=='simpleRHS':
 						fig_path = self.saving_path + self.fig_dir + self.model_name + "/forward_difference_eval.png"
 						fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
-						axes[0].plot(np.linalg.norm(Y - Y_true, axis=1))
+						if self.output_dynamics=='simpleRHS':
+							Y_descaled = self.scaler.descaleDerivatives(Y)
+							Y_true_descaled = self.scaler.descaleDerivatives(Y_true)
+						else:
+							Y_descaled = self.scaler.descaleData(Y)
+							Y_true_descaled = self.scaler.descaleData(Y_true)
+						axes[0].plot(np.linalg.norm(Y_descaled - Y_true_descaled, axis=1))
 						axes[0].set_title('MSE sequence')
-						axes[1].plot(np.sum(Y - Y_true, axis=1))
+						axes[1].plot(np.sum(Y_descaled - Y_true_descaled, axis=1))
 						axes[1].set_title('Absolute Error sequence')
 						fig.suptitle('Forward-Difference Evaluation')
 						plt.savefig(fig_path)
@@ -402,7 +440,7 @@ class esn(object):
 					out = train_input_sequence[dynamics_length]
 					for t in range(n_times):
 						if self.output_dynamics=="simpleRHS":
-							out += self.dt * W_out @ H[t,:]
+							out += self.dt * self.scaler.descaleDerivatives((W_out @ H[t,:]).T).T
 						elif self.output_dynamics=="andrewRHS":
 							out = out - self.lam * self.dt * ( out - W_out @ H[t,:] )
 						ridge_predict_traj[t,:] = out
@@ -518,7 +556,7 @@ class esn(object):
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			if self.output_dynamics=="simpleRHS":
-				out = i + self.dt * W_out @ self.augmentHidden(h)
+				out = i + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
 			elif self.output_dynamics=="andrewRHS":
 				out = i - self.lam * self.dt * ( i - W_out @ self.augmentHidden(h) )
 			else:
@@ -548,7 +586,7 @@ class esn(object):
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 			if self.output_dynamics=="simpleRHS":
-				out = out + self.dt * W_out @ self.augmentHidden(h)
+				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
 			else:
@@ -615,7 +653,7 @@ class esn(object):
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
 			if self.output_dynamics=="simpleRHS":
-				out = out + self.dt * W_out @ self.augmentHidden(h)
+				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
 			else:
