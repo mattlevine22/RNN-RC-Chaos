@@ -86,6 +86,7 @@ class esn(object):
 		self.plot_matrix_spectrum = params["plot_matrix_spectrum"]
 		self.use_tilde = params["use_tilde"]
 		self.dont_redo = params["dont_redo"]
+		self.bias_var = params["bias_var"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -115,7 +116,8 @@ class esn(object):
 		'lambda': 'LAM',
 		'use_tilde': 'USETILDE',
 		'scaler': 'SCALER',
-		'scaler_derivatives': 'DSCALER'
+		'scaler_derivatives': 'DSCALER',
+		'bias_var': 'BVAR'
 		}
 		return keys
 
@@ -208,6 +210,10 @@ class esn(object):
 		# if self.output_dynamics:
 		# 	W_in = W_in / dt
 
+		# Initialize the hidden bias term
+		b_h = self.bias_var * np.random.randn(self.reservoir_size, 1)
+
+
 		# Set the diffusion term
 		gammaI = self.gamma * sparse.eye(self.reservoir_size)
 		I = sparse.eye(self.reservoir_size)
@@ -229,7 +235,7 @@ class esn(object):
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -269,7 +275,7 @@ class esn(object):
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -473,6 +479,7 @@ class esn(object):
 			raise ValueError("Undefined solver.")
 
 		print("FINALISING WEIGHTS...")
+		self.b_h = b_h
 		self.W_in = W_in
 		self.W_h = W_h
 		self.W_out = W_out
@@ -520,6 +527,7 @@ class esn(object):
 			return False
 
 	def predictSequence(self, input_sequence):
+		b_h = self.b_h
 		W_h = self.W_h
 		W_out = self.W_out
 		W_in = self.W_in
@@ -544,7 +552,7 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -574,7 +582,7 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -609,6 +617,7 @@ class esn(object):
 		return prediction, target, prediction_augment, target_augment, hidden, hidden_augment
 
 	def predictSequenceMemoryCapacity(self, input_sequence, target_sequence):
+		b_h = self.b_h
 		W_h = self.W_h
 		W_out = self.W_out
 		W_in = self.W_in
@@ -631,7 +640,7 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t], (-1,1))
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -664,7 +673,7 @@ class esn(object):
 			i = np.reshape(input_sequence[t], (-1,1))
 			# i = out
 			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i)
+				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
 			elif self.hidden_dynamics=='naiveRNN':
 				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
 			elif self.hidden_dynamics=='LARNN_forward':
@@ -820,6 +829,7 @@ class esn(object):
 				self.W_out = data["W_out"]
 				self.W_in = data["W_in"]
 				self.W_h = data["W_h"]
+				self.b_h = data["b_h"]
 				self.Winv_backward = data["Winv_backward"]
 				self.Winv_midpoint = data["Winv_backward"]
 				self.gamma = data["gamma"]
@@ -855,6 +865,7 @@ class esn(object):
 		"W_out":self.W_out,
 		"W_in":self.W_in,
 		"W_h":self.W_h,
+		"b_h":self.b_h,
 		"Winv_backward":self.Winv_backward,
 		"Winv_midpoint":self.Winv_midpoint,
 		"gamma":self.gamma,
