@@ -416,6 +416,11 @@ def getESNParser(parser):
 	parser.add_argument("--dont_redo", help="boolean to check if model has already run. If so, quit. Default is to re-run and overwrite an existing trained model.", type=int, default=0)
 	parser.add_argument("--scaler_derivatives", help="scaler", type=str, default='no')
 	parser.add_argument("--bias_var", help="variance of gaussian hidden bias vector", type=float, default=1)
+	parser.add_argument("--learn_markov", help="boolean to include RF markovian term", type=int, default=0)
+	parser.add_argument("--learn_memory", help="boolean to include reservoir states", type=int, default=1)
+	parser.add_argument("--rf_Win_bound", help="bounds on uniform distribution from which to sample Win RF map", type=float, default=0.005)
+	parser.add_argument("--rf_bias_bound", help="bounds on uniform distribution from which to sample bias term in RF map", type=float, default=4)
+	parser.add_argument("--rf_dim", help="number of random features", type=int, default=2000)
 	return parser
 
 def getMLPParser(parser):

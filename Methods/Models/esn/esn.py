@@ -22,10 +22,10 @@ from functools import partial
 print = partial(print, flush=True)
 
 from sklearn.linear_model import Ridge
+from sklearn.linear_model import Lasso
 
 #MATT hacking in ODE SOLVER
 import os,sys,inspect
-# pdb.set_trace()
 # current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 base_dir = '/Users/matthewlevine/code_projects/RNN-RC-Chaos'
 lorenz_dir = os.path.join(base_dir, "Data/Lorenz3D/Utils")
@@ -87,6 +87,11 @@ class esn(object):
 		self.use_tilde = params["use_tilde"]
 		self.dont_redo = params["dont_redo"]
 		self.bias_var = params["bias_var"]
+		self.learn_markov = params["learn_markov"]
+		self.learn_memory = params["learn_memory"]
+		self.rf_dim = params["rf_dim"]
+		self.rf_Win_bound = params["rf_Win_bound"]
+		self.rf_bias_bound = params["rf_bias_bound"]
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -95,6 +100,37 @@ class esn(object):
 		os.makedirs(self.saving_path + self.fig_dir + self.model_name, exist_ok=True)
 		os.makedirs(self.saving_path + self.results_dir + self.model_name, exist_ok=True)
 		os.makedirs(self.saving_path + self.logfile_dir + self.model_name, exist_ok=True)
+
+	# def solve(self, r0, x0, solver='Euler'):
+
+	def rhs(self, t, u):
+		x_input = u[:input_dim,:]
+		h_reservoir = u[input_dim:,:]
+
+		# get RHS values for \dot{x} = C*[f_markov; f_memory]
+		if self.learn_markov:
+			f_markov = np.tanh(self.W_in_markov @ x_input + self.b_h_markov)
+		if self.learn_memory:
+			f_memory = self.augmentHidden(h_reservoir)
+
+		# concatenate RHS for \dot{x} using RC-memory terms and RF-markovian terms
+		if self.learn_markov and self.learn_memory:
+			f_all = np.vstack((f_markov, f_memory)
+		elif self.learn_markov:
+			f_all = f_markov
+		elif self.learn_memory:
+			f_all = f_memory
+		else:
+			raise ValueError('need to learn SOMETHING duh.')
+		dx = self.W_out @ f_all
+
+		# get RHS for \dot{h} hidden/reservoir state
+		if self.learn_memory:
+			dh_reservoir = np.tanh(self.A @ h_reservoir + self.W_in @ x_input + self.b_h)
+			return np.stack((dx, dh_reservoir))
+		else:
+			return dx
+
 
 	def getKeysInModelName(self):
 		keys = {
@@ -117,7 +153,10 @@ class esn(object):
 		'use_tilde': 'USETILDE',
 		'scaler': 'SCALER',
 		'scaler_derivatives': 'DSCALER',
-		'bias_var': 'BVAR'
+		'bias_var': 'BVAR',
+		'rf_dim': 'N_RF',
+		'learn_markov': 'MARKOV',
+		'learn_memory': 'MEMORY'
 		}
 		return keys
 
@@ -193,60 +232,69 @@ class esn(object):
 		N, input_dim = np.shape(train_input_sequence)
 
 		# Setting the reservoir size automatically to avoid overfitting
-		print("Initializing the reservoir weights...")
-		nodes_per_input = int(np.ceil(self.approx_reservoir_size/input_dim))
-		self.reservoir_size = int(input_dim*nodes_per_input)
-		self.sparsity = self.degree/self.reservoir_size;
-		print("NETWORK SPARSITY: {:}".format(self.sparsity))
-		print("Computing sparse hidden to hidden weight matrix...")
-		W_h = self.getSparseWeights(self.reservoir_size, self.reservoir_size, self.radius, self.sparsity, self.worker_id)
+		if self.learn_markov:
+			W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim))
+			b_h_markov = np.random.uniform(low=-self.rf_bias_bound, high=self.rf_bias_bound, size=(self.rf_dim, 1))
 
-		# Initializing the input weights
-		print("Initializing the input weights...")
-		W_in = np.zeros((self.reservoir_size, input_dim))
-		q = int(self.reservoir_size/input_dim)
-		for i in range(0, input_dim):
-			W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
-		# if self.output_dynamics:
-		# 	W_in = W_in / dt
+		h_zeros = np.array([])
+		if self.learn_memory:
+			print("Initializing the reservoir weights...")
+			nodes_per_input = int(np.ceil(self.approx_reservoir_size/input_dim))
+			self.reservoir_size = int(input_dim*nodes_per_input)
+			self.sparsity = self.degree/self.reservoir_size;
+			print("NETWORK SPARSITY: {:}".format(self.sparsity))
+			print("Computing sparse hidden to hidden weight matrix...")
+			W_h = self.getSparseWeights(self.reservoir_size, self.reservoir_size, self.radius, self.sparsity, self.worker_id)
 
-		# Initialize the hidden bias term
-		b_h = self.bias_var * np.random.randn(self.reservoir_size, 1)
+			# Initializing the input weights
+			print("Initializing the input weights...")
+			W_in = np.zeros((self.reservoir_size, input_dim))
+			q = int(self.reservoir_size/input_dim)
+			for i in range(0, input_dim):
+				W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
+			# if self.output_dynamics:
+			# 	W_in = W_in / dt
 
+			# Initialize the hidden bias term
+			b_h = self.bias_var * np.random.randn(self.reservoir_size, 1)
 
-		# Set the diffusion term
-		gammaI = self.gamma * sparse.eye(self.reservoir_size)
-		I = sparse.eye(self.reservoir_size)
-		Winv_backward = None
-		Winv_midpoint = None
-		if self.hidden_dynamics=='LARNN_backward':
-			Winv_backward = splinalg.inv(I - self.dt*(W_h-W_h.T))
-		elif self.hidden_dynamics=='LARNN_midpoint':
-			Winv_midpoint = splinalg.inv(I - self.dt*(W_h-W_h.T)/2)
+			# Set the diffusion term
+			gammaI = self.gamma * sparse.eye(self.reservoir_size)
+			I = sparse.eye(self.reservoir_size)
+			Winv_backward = None
+			Winv_midpoint = None
+			if self.hidden_dynamics=='LARNN_backward':
+				Winv_backward = splinalg.inv(I - self.dt*(W_h-W_h.T))
+			elif self.hidden_dynamics=='LARNN_midpoint':
+				Winv_midpoint = splinalg.inv(I - self.dt*(W_h-W_h.T)/2)
+
+			# Initialize reservoir state
+			h_zeros = np.zeros((self.reservoir_size, 1))
 
 		# TRAINING LENGTH
 		tl = N - dynamics_length
 
 		print("TRAINING: Dynamics prerun...")
 		# H_dyn = np.zeros((dynamics_length, self.getAugmentedStateSize(), 1))
-		h = np.zeros((self.reservoir_size, 1))
+		h = np.copy(h_zeros)
 		for t in range(dynamics_length):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
-			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
-			elif self.hidden_dynamics=='naiveRNN':
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN_forward':
-				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
-			elif self.hidden_dynamics=='LARNN_backward':
-				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
-			elif self.hidden_dynamics=='LARNN_midpoint':
-				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
-			else:
-				h = np.tanh(W_h @ h + W_in @ i)
-			# H_dyn[t] = self.augmentHidden(h)
+			if self.learn_memory:
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
+				elif self.hidden_dynamics=='naiveRNN':
+					h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
+				# H_dyn[t] = self.augmentHidden(h)
 
 		print("\n")
 
@@ -263,7 +311,9 @@ class esn(object):
 			NORMEVERY = 10
 			HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
 			YTH = np.zeros((input_dim, self.getAugmentedStateSize()))
+
 		H = []
+		H_markov = []
 		Y = []
 		Y_true = []
 
@@ -274,23 +324,32 @@ class esn(object):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
-			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
-			elif self.hidden_dynamics=='naiveRNN':
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN_forward':
-				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
-			elif self.hidden_dynamics=='LARNN_backward':
-				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
-			elif self.hidden_dynamics=='LARNN_midpoint':
-				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
-			else:
-				h = np.tanh(W_h @ h + W_in @ i)
+			if self.learn_memory:
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
+				elif self.hidden_dynamics=='naiveRNN':
+					h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
+				# AUGMENT THE HIDDEN STATE
+				h_aug = self.augmentHidden(h)
+				H.append(h_aug[:,0])
+			if self.learn_markov:
+				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+				H_markov.append(h_markov[:,0])
 
-			# AUGMENT THE HIDDEN STATE
-			h_aug = self.augmentHidden(h)
-			H.append(h_aug[:,0])
-			plot_offset = 1
+			# if self.learn_markov and self.learn_memory:
+			# 	h_all = np.vstack((h_markov, h_aug))
+			# elif self.learn_markov:
+			# 	h_all = h_markov
+			# elif self.learn_memory:
+			# 	h_all = h_aug
 
 			if self.output_dynamics=='simpleRHS':
 				# FORWARD DIFFERENCE---infer derivative at time t+dl
@@ -307,7 +366,6 @@ class esn(object):
 				target = np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / (self.dt*self.lam) )
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
-				# plot_offset = 1
 
 			Y.append(target[:,0])
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
@@ -319,6 +377,7 @@ class esn(object):
 				H = []
 				Y = []
 
+		self.first_train_vec = train_input_sequence[(dynamics_length+1),:]
 		if self.solver == "pinv" and (len(H) != 0):
 			# ADDING THE REMAINING BATCH
 			H = np.array(H)
@@ -334,9 +393,9 @@ class esn(object):
 			print("TEACHER FORCING ENDED.")
 			print(np.shape(H))
 			print(np.shape(Y))
-			print('\nmax(H)=',np.max(H))
-			print('mean(H)=',np.mean(H))
-			print('std(H)=',np.std(H))
+			# print('\nmax(H)=',np.max(H))
+			# print('mean(H)=',np.mean(H))
+			# print('std(H)=',np.std(H))
 
 			print('\nmax(x)=',np.max(train_input_sequence))
 			print('mean(x)=',np.mean(train_input_sequence))
@@ -367,17 +426,29 @@ class esn(object):
 				print('mean(Y_norm)=',np.mean(Y))
 				print('std(Y_norm)=',np.std(Y))
 
+			# group Markovian-RFs and reservoir states
+			H = np.array(H)
+			H_markov = np.array(H_markov)
+			if self.learn_markov and self.learn_memory:
+				H_all = np.hstack((H,H_markov))
+			elif self.learn_markov:
+				H_all = H_markov
+			elif self.learn_memory:
+				H_all = H
+
 
 			ridge = Ridge(alpha=self.regularization, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
+			# ridge = Lasso(alpha=self.regularization, fit_intercept=False, normalize=False, copy_X=True)
 			# print(np.shape(H))
 			# print(np.shape(Y))
 			# print("##")
-			ridge.fit(H, Y)
-			W_out = ridge.coef_
 
-			try:
+			ridge.fit(H_all, Y)
+			W_out = ridge.coef_
+			H_all = np.array(H_all)
+
+			if self.learn_memory:
 				## Plot H
-				H = np.array(H)
 				fontsize = 12
 				# Plotting the contour plot
 				fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
@@ -392,11 +463,12 @@ class esn(object):
 				plt.close()
 
 
+
+			try:
 				## Plot ridge-regression quality
-				H = np.array(H)
 				Y = np.array(Y)
 				Y_true = np.array(Y_true)
-				ridge_predict = ridge.predict(H)
+				ridge_predict = ridge.predict(H_all)
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=1, ncols=1+Y.shape[1],figsize=(5*(1+Y.shape[1]), 6))
 				for ax_ind in range(Y.shape[1]):
@@ -446,14 +518,14 @@ class esn(object):
 					out = train_input_sequence[dynamics_length]
 					for t in range(n_times):
 						if self.output_dynamics=="simpleRHS":
-							out += self.dt * self.scaler.descaleDerivatives((W_out @ H[t,:]).T).T
+							out += self.dt * self.scaler.descaleDerivatives((W_out @ H_all[t,:]).T).T
 						elif self.output_dynamics=="andrewRHS":
-							out = out - self.lam * self.dt * ( out - W_out @ H[t,:] )
+							out = out - self.lam * self.dt * ( out - W_out @ H_all[t,:] )
 						ridge_predict_traj[t,:] = out
 				else:
 					ridge_predict_traj = ridge_predict
 
-				true_traj = train_input_sequence[(dynamics_length+plot_offset):]
+				true_traj = train_input_sequence[(dynamics_length+1):]
 
 				print('First true traj:', true_traj[0,:])
 				self.first_train_vec = true_traj[0,:]
@@ -479,22 +551,38 @@ class esn(object):
 			raise ValueError("Undefined solver.")
 
 		print("FINALISING WEIGHTS...")
-		self.b_h = b_h
-		self.W_in = W_in
-		self.W_h = W_h
 		self.W_out = W_out
-		self.Winv_backward = Winv_backward
-		self.Winv_midpoint = Winv_midpoint
+		if self.learn_markov:
+			self.b_h_markov = b_h_markov
+			self.W_in_markov = W_in_markov
+		else:
+			self.b_h_markov = None
+			self.W_in_markov = None
+
+		if self.learn_memory:
+			self.b_h = b_h
+			self.W_in = W_in
+			self.W_h = W_h
+			self.Winv_backward = Winv_backward
+			self.Winv_midpoint = Winv_midpoint
+		else:
+			self.b_h = None
+			self.W_in = None
+			self.W_h = None
+			self.Winv_backward = None
+			self.Winv_midpoint = None
+
 
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out)
-		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out)
+		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out) + np.size(self.W_in_markov) + np.size(self.b_h_markov)
 		print("Number of trainable parameters: {}".format(self.n_trainable_parameters))
 		print("Total number of parameters: {}".format(self.n_model_parameters))
 		print("SAVING MODEL...")
 		self.saveModel()
 
 		# plot matrix spectrum
+		plotMatrix(self, self.W_out, 'W_out')
 		if self.plot_matrix_spectrum:
 			if self.hidden_dynamics=='ARNN':
 				gammaI = self.gamma * sparse.eye(self.reservoir_size)
@@ -527,6 +615,9 @@ class esn(object):
 			return False
 
 	def predictSequence(self, input_sequence):
+
+		b_h_markov = self.b_h_markov
+		W_in_markov = self.W_in_markov
 		b_h = self.b_h
 		W_h = self.W_h
 		W_out = self.W_out
@@ -536,41 +627,58 @@ class esn(object):
 		dynamics_length = self.dynamics_length
 		iterative_prediction_length = self.iterative_prediction_length
 
-		self.reservoir_size, _ = np.shape(W_h)
+		if self.learn_memory:
+			self.reservoir_size, _ = np.shape(W_h)
+			gammaI = self.gamma * sparse.eye(self.reservoir_size)
+			I = sparse.eye(self.reservoir_size)
+			h_zeros = np.zeros((self.reservoir_size, 1))
+		else:
+			h_zeros = np.array([])
+
 		N = np.shape(input_sequence)[0]
-		gammaI = self.gamma * sparse.eye(self.reservoir_size)
-		I = sparse.eye(self.reservoir_size)
 
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
 		prediction_warm_up = []
 		hidden_warm_up = []
-		h = np.zeros((self.reservoir_size, 1))
+		h = np.copy(h_zeros)
 		for t in range(1,dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
-			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
-			elif self.hidden_dynamics=='naiveRNN':
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN_forward':
-				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
-			elif self.hidden_dynamics=='LARNN_backward':
-				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
-			elif self.hidden_dynamics=='LARNN_midpoint':
-				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
-			else:
-				h = np.tanh(W_h @ h + W_in @ i)
+
+			if self.learn_memory:
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
+				elif self.hidden_dynamics=='naiveRNN':
+					h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
+			if self.learn_markov:
+				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+
+			if self.learn_markov and self.learn_memory:
+				h_all = np.vstack((h_markov, self.augmentHidden(h)))
+			elif self.learn_markov:
+				h_all = h_markov
+			elif self.learn_memory:
+				h_all = self.augmentHidden(h)
+
 			if self.output_dynamics=="simpleRHS":
-				out = i + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
+				out = i + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
 			elif self.output_dynamics=="andrewRHS":
-				out = i - self.lam * self.dt * ( i - W_out @ self.augmentHidden(h) )
+				out = i - self.lam * self.dt * ( i - W_out @ h_all )
 			else:
-				out = W_out @ self.augmentHidden(h)
+				out = W_out @ h_all
 			prediction_warm_up.append(out)
-			hidden_warm_up.append(h)
+			hidden_warm_up.append(h_all)
 
 		print("\n")
 
@@ -581,26 +689,37 @@ class esn(object):
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			if self.hidden_dynamics=='ARNN':
-				h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
-			elif self.hidden_dynamics=='naiveRNN':
-				h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
-			elif self.hidden_dynamics=='LARNN_forward':
-				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
-			elif self.hidden_dynamics=='LARNN_backward':
-				h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
-			elif self.hidden_dynamics=='LARNN_midpoint':
-				h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
-			else:
-				h = np.tanh(W_h @ h + W_in @ i)
+			if self.learn_memory:
+				if self.hidden_dynamics=='ARNN':
+					h = h + self.dt * np.tanh((W_h-W_h.T - gammaI) @ h + W_in @ i + b_h)
+				elif self.hidden_dynamics=='naiveRNN':
+					h = h + self.dt * np.tanh(W_h @ h + W_in @ i)
+				elif self.hidden_dynamics=='LARNN_forward':
+					h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
+				elif self.hidden_dynamics=='LARNN_backward':
+					h = Winv_backward @ (h + self.dt * np.tanh(W_in @ i))
+				elif self.hidden_dynamics=='LARNN_midpoint':
+					h = Winv_midpoint @ ((I + self.dt*(W_h - W_h.T)/2) @ h + self.dt * np.tanh(W_in @ i))
+				else:
+					h = np.tanh(W_h @ h + W_in @ i)
+			if self.learn_markov:
+				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+
+			if self.learn_markov and self.learn_memory:
+				h_all = np.vstack((h_markov, self.augmentHidden(h)))
+			elif self.learn_markov:
+				h_all = h_markov
+			elif self.learn_memory:
+				h_all = self.augmentHidden(h)
+
 			if self.output_dynamics=="simpleRHS":
-				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
+				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
 			elif self.output_dynamics=="andrewRHS":
-				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
+				out = out - self.lam * self.dt * ( out - W_out @ h_all )
 			else:
-				out = W_out @ self.augmentHidden(h)
+				out = W_out @ h_all
 			prediction.append(out)
-			hidden.append(h)
+			hidden.append(h_all)
 			i = out
 		print("\n")
 
@@ -826,6 +945,8 @@ class esn(object):
 		try:
 			with open(data_path, "rb") as file:
 				data = pickle.load(file)
+				self.W_in_markov = data["W_in_markov"]
+				self.b_h_markov = data["b_h_markov"]
 				self.W_out = data["W_out"]
 				self.W_in = data["W_in"]
 				self.W_h = data["W_h"]
@@ -862,6 +983,8 @@ class esn(object):
 		"n_trainable_parameters":self.n_trainable_parameters,
 		"n_model_parameters":self.n_model_parameters,
 		"total_training_time":self.total_training_time,
+		"W_in_markov":self.W_in_markov,
+		"b_h_markov":self.b_h_markov,
 		"W_out":self.W_out,
 		"W_in":self.W_in,
 		"W_h":self.W_h,

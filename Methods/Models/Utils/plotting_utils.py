@@ -14,11 +14,13 @@ from scipy.sparse.linalg import eigs as sparse_eigs
 # Plotting parameters
 import pdb
 import matplotlib
+import pandas as pd
 hostname = socket.gethostname()
 print("PLOTTING HOSTNAME: {:}".format(hostname))
 CLUSTER = True if ((hostname[:2]=='eu')  or (hostname[:5]=='daint') or (hostname[:3]=='nid')) else False
 if CLUSTER: matplotlib.use("Agg")
 
+import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib import rc
 from matplotlib  import cm
@@ -244,6 +246,23 @@ def plotMatrixSpectrum(model, A, mat_name):
         plt.title('Eigenvalues of {:}'.format(mat_name))
         plt.savefig(fig_path)
         plt.close()
+
+def plotMatrix(model, A, mat_name):
+    fig_path = model.saving_path + model.fig_dir + model.model_name + "/matrix_{:}.png".format(mat_name)
+    # plot matrix visualizations
+    fig, ax = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
+    foo = ax[0].matshow(A, vmin=np.min(A), vmax=np.max(A), aspect='auto')
+    # ax[0].axes.xaxis.set_visible(False)
+    # ax[0].axes.yaxis.set_visible(False)
+    ax[0].set_title('W_out')
+    fig.colorbar(foo, ax=ax[0])
+
+    sns.ecdfplot(data=np.abs(A).reshape(-1,1), ax=ax[1])
+    ax[1].set_xscale('log')
+    ax[1].set_title('Distribution of matrix entries')
+    plt.savefig(fig_path)
+    plt.close()
+
 
 def plotHyperparamContour(df, fig_path, xkey=None, ykey=None, zkey=None):
     fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(6, 6))
