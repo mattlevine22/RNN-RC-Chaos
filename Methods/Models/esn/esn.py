@@ -10,6 +10,7 @@ import pickle
 from scipy import sparse as sparse
 from scipy.sparse import linalg as splinalg
 from scipy.linalg import pinv2 as scipypinv2
+from scipy.integrate import solve_ivp, ode
 # from scipy.linalg import lstsq as scipylstsq
 # from numpy.linalg import lstsq as numpylstsq
 from utils import *
@@ -103,9 +104,38 @@ class esn(object):
 
 	# def solve(self, r0, x0, solver='Euler'):
 
-	def rhs(self, t, u):
-		x_input = u[:input_dim,:]
-		h_reservoir = u[input_dim:,:]
+	def predict_next(self, x_input, h_reservoir, solver='Euler_old'):
+
+		x_input = np.squeeze(x_input)
+		h_reservoir = np.squeeze(h_reservoir)
+
+		u0 = np.hstack((x_input, h_reservoir))
+		t0 = 0
+
+		if solver=='Euler':
+			rhs = self.rhs(t0, u0)
+			u_next = u0 + self.dt * rhs
+			x_next = u_next[:self.input_dim,None]
+			h_next = u_next[self.input_dim:,None]
+		elif solver=='RK45':
+			t_span = [t0, t0+self.dt]
+			t_eval = np.array([t0+self.dt])
+			# sol = solve_ivp(fun=lambda t, y: self.rhs(t0, y0), t_span=t_span, y0=u0, method=testcontinuous_ode_int_method, rtol=testcontinuous_ode_int_rtol, atol=testcontinuous_ode_int_atol, max_step=testcontinuous_ode_int_max_step, t_eval=t_eval)
+			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt/10)
+			u_next = sol.y
+			x_next = u_next[:self.input_dim]
+			h_next = u_next[self.input_dim:]
+		elif solver=='Euler_old':
+			rhs = self.rhs(t0, u0)
+			h_next = h_reservoir[:,None] + self.dt * rhs[self.input_dim:,None]
+			x_next = x_input[:,None] + self.dt * self.W_out @ self.augmentHidden(h_next)
+
+		return x_next, h_next
+
+	def rhs(self, t0, u0):
+
+		x_input = u0[:self.input_dim]
+		h_reservoir = u0[self.input_dim:]
 
 		# get RHS values for \dot{x} = C*[f_markov; f_memory]
 		if self.learn_markov:
@@ -126,8 +156,8 @@ class esn(object):
 
 		# get RHS for \dot{h} hidden/reservoir state
 		if self.learn_memory:
-			dh_reservoir = np.tanh(self.A @ h_reservoir + self.W_in @ x_input + self.b_h)
-			return np.stack((dx, dh_reservoir))
+			dh_reservoir = np.tanh(self.W_h_effective @ h_reservoir + self.W_in @ x_input + np.squeeze(self.b_h))
+			return np.hstack((dx, dh_reservoir))
 		else:
 			return dx
 
@@ -614,31 +644,36 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
 
-			if self.learn_memory:
-				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
-					h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
-				elif self.hidden_dynamics=='LARNN_forward':
-					h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
-				else:
-					h = np.tanh(W_h @ h + W_in @ i)
-			if self.learn_markov:
-				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
-
-			if self.learn_markov and self.learn_memory:
-				h_all = np.vstack((h_markov, self.augmentHidden(h)))
-			elif self.learn_markov:
-				h_all = h_markov
-			elif self.learn_memory:
-				h_all = self.augmentHidden(h)
-
-			if self.output_dynamics=="simpleRHS":
-				out = i + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
-			elif self.output_dynamics=="andrewRHS":
-				out = i - self.lam * self.dt * ( i - W_out @ h_all )
+			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"]:
+				out, h = self.predict_next(i, h)
 			else:
-				out = W_out @ h_all
+				raise ValueError('TAKE HEED: back to the old way of doing things.')
+				if self.learn_memory:
+					if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
+						h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
+					elif self.hidden_dynamics=='LARNN_forward':
+						h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
+					else:
+						h = np.tanh(W_h @ h + W_in @ i)
+				if self.learn_markov:
+					h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+
+				if self.learn_markov and self.learn_memory:
+					h_all = np.vstack((h_markov, self.augmentHidden(h)))
+				elif self.learn_markov:
+					h_all = h_markov
+				elif self.learn_memory:
+					h_all = self.augmentHidden(h)
+
+				if self.output_dynamics=="simpleRHS":
+					out = i + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
+				elif self.output_dynamics=="andrewRHS":
+					out = i - self.lam * self.dt * ( i - W_out @ h_all )
+				else:
+					out = W_out @ h_all
+
 			prediction_warm_up.append(out)
-			hidden_warm_up.append(h_all)
+			hidden_warm_up.append(h)
 
 		print("\n")
 
@@ -649,31 +684,36 @@ class esn(object):
 		for t in range(iterative_prediction_length):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
-			if self.learn_memory:
-				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
-					h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
-				elif self.hidden_dynamics=='LARNN_forward':
-					h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
-				else:
-					h = np.tanh(W_h @ h + W_in @ i)
-			if self.learn_markov:
-				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
 
-			if self.learn_markov and self.learn_memory:
-				h_all = np.vstack((h_markov, self.augmentHidden(h)))
-			elif self.learn_markov:
-				h_all = h_markov
-			elif self.learn_memory:
-				h_all = self.augmentHidden(h)
-
-			if self.output_dynamics=="simpleRHS":
-				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
-			elif self.output_dynamics=="andrewRHS":
-				out = out - self.lam * self.dt * ( out - W_out @ h_all )
+			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"]:
+				out, h = self.predict_next(i, h)
 			else:
-				out = W_out @ h_all
+				raise ValueError('TAKE HEED: back to the old way of doing things.')
+				if self.learn_memory:
+					if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
+						h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
+					elif self.hidden_dynamics=='LARNN_forward':
+						h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
+					else:
+						h = np.tanh(W_h @ h + W_in @ i)
+				if self.learn_markov:
+					h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+
+				if self.learn_markov and self.learn_memory:
+					h_all = np.vstack((h_markov, self.augmentHidden(h)))
+				elif self.learn_markov:
+					h_all = h_markov
+				elif self.learn_memory:
+					h_all = self.augmentHidden(h)
+
+				if self.output_dynamics=="simpleRHS":
+					out = out + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
+				elif self.output_dynamics=="andrewRHS":
+					out = out - self.lam * self.dt * ( out - W_out @ h_all )
+				else:
+					out = W_out @ h_all
 			prediction.append(out)
-			hidden.append(h_all)
+			hidden.append(h)
 			i = out
 		print("\n")
 
