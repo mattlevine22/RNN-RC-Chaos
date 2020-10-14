@@ -17,6 +17,7 @@ from utils import *
 import os
 from plotting_utils import *
 from global_utils import *
+from ode_utils import *
 import pickle
 import time
 from functools import partial
@@ -94,6 +95,14 @@ class esn(object):
 		self.rf_Win_bound = params["rf_Win_bound"]
 		self.rf_bias_bound = params["rf_bias_bound"]
 
+		####### Add physical mechanistic rhs "f0" ##########
+		self.use_f0 = params["use_f0"]
+		if self.use_f0:
+			physics = Physics(name=params["f0_name"])
+			self.f0 = physics.rhs
+		else:
+			self.f0 = 0
+
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
 
@@ -138,8 +147,25 @@ class esn(object):
 			h_next = u_next[self.input_dim:]
 		elif solver=='Euler_old':
 			rhs = self.rhs(t0, u0)
-			h_next = h_reservoir[:,None] + self.dt * rhs[self.input_dim:,None]
-			x_next = x_input[:,None] + self.dt * self.W_out @ self.augmentHidden(h_next)
+			if self.learn_markov and self.learn_memory:
+				raise ValueError('Havent dealt with this case yet')
+			elif self.learn_memory:
+				if self.use_f0:
+					y0 = self.scaler.descaleData(x_input)
+					f0 = self.f0(t0=t0, u0=y0)
+					if self.scaler_tt in ['Standard', 'standard']:
+						f0 = f0 / self.scaler.data_std
+						f0 = np.reshape(f0, (-1,1))
+					else:
+						raise ValueError('not set up to undo other types of normalizations!')
+				else:
+					f0 = 0
+				h_next = h_reservoir[:,None] + self.dt * rhs[self.input_dim:,None]
+				x_next = x_input[:,None] + self.dt * (f0 + self.W_out @ self.augmentHidden(h_next))
+			elif self.learn_markov:
+				h_next = h_reservoir[:,None] # should be empty
+				x_next = x_input[:,None] + self.dt * rhs[:,None]
+
 		elif solver=='Euler_old_fast':
 			dt_fast = self.dt/10
 			t_end = t0 + self.dt
@@ -163,13 +189,12 @@ class esn(object):
 		return x_next, h_next
 
 	def rhs(self, t0, u0):
-
 		x_input = u0[:self.input_dim]
 		h_reservoir = u0[self.input_dim:]
 
 		# get RHS values for \dot{x} = C*[f_markov; f_memory]
 		if self.learn_markov:
-			f_markov = np.tanh(self.W_in_markov @ x_input + self.b_h_markov)
+			f_markov = np.tanh(self.W_in_markov @ x_input + np.squeeze(self.b_h_markov))
 		if self.learn_memory:
 			f_memory = self.augmentHidden(h_reservoir)
 
@@ -183,7 +208,18 @@ class esn(object):
 		else:
 			raise ValueError('need to learn SOMETHING duh.')
 
-		dx = self.W_out @ f_all
+		# add mechanistic rhs
+		if self.use_f0:
+			y0 = self.scaler.descaleData(x_input)
+			f0 = self.f0(t0=t0, u0=y0)
+			if self.scaler_tt in ['Standard', 'standard']:
+				f0 = f0 / self.scaler.data_std
+			else:
+				raise ValueError('not set up to undo other types of normalizations!')
+		else:
+			f0 = 0
+
+		dx = f0 + self.W_out @ f_all
 
 		# get RHS for \dot{h} hidden/reservoir state
 		if self.learn_memory:
@@ -217,7 +253,8 @@ class esn(object):
 		'bias_var': 'BVAR',
 		'rf_dim': 'N_RF',
 		'learn_markov': 'MARKOV',
-		'learn_memory': 'MEMORY'
+		'learn_memory': 'MEMORY',
+		'use_f0': 'f0'
 		}
 		return keys
 
@@ -401,10 +438,17 @@ class esn(object):
 
 			if self.output_dynamics=='simpleRHS':
 				# FORWARD DIFFERENCE---infer derivative at time t+dl
-				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt
+				t0=0
 				u0 = self.scaler.descaleData(train_input_sequence[t+dynamics_length])
+				if self.use_f0:
+					f0 = self.f0(t0=t0, u0=u0)
+					f0 = f0 / self.scaler.data_std
+					f0 = np.reshape(f0, (-1,1))
+				else:
+					f0 = 0
+				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt - f0
 				try:
-					true_derivative = lorenz(t0=0, u0=u0)
+					true_derivative = lorenz(t0=t0, u0=u0)
 					Y_true.append(true_derivative)
 				except:
 					# fails when RDIM is not full state space
@@ -675,7 +719,7 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
 
-			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"]:
+			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
@@ -716,7 +760,7 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 
-			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"]:
+			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')

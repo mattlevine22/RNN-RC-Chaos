@@ -421,6 +421,8 @@ def getESNParser(parser):
 	parser.add_argument("--rf_Win_bound", help="bounds on uniform distribution from which to sample Win RF map", type=float, default=0.005)
 	parser.add_argument("--rf_bias_bound", help="bounds on uniform distribution from which to sample bias term in RF map", type=float, default=4)
 	parser.add_argument("--rf_dim", help="number of random features", type=int, default=2000)
+	parser.add_argument("--use_f0", help="boolean to use physics-based known rhs", type=int, default=0)
+	parser.add_argument("--f0_name", help="which physics-based rhs to use", type=str, default='l63')
 	return parser
 
 def getMLPParser(parser):

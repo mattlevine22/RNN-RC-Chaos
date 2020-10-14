@@ -102,7 +102,7 @@ def plotIterativePrediction(model, set_name, target, prediction, error, nerror, 
     if latent_states is not None:
         plotAttractor(model, set_name, latent_states, ic_idx)
 
-    if hidden_augment is not None:
+    if hidden_augment is not None and hidden_augment.shape[1]>0:
         fontsize = 12
         vmin = hidden_augment.min()
         vmax = hidden_augment.max()
@@ -123,7 +123,7 @@ def plotIterativePrediction(model, set_name, target, prediction, error, nerror, 
         plt.savefig(fig_path)
         plt.close()
 
-    if hidden is not None:
+    if hidden is not None and hidden.shape[1]>0:
         fontsize = 12
         vmin = hidden.min()
         vmax = hidden.max()
