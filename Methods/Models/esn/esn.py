@@ -117,11 +117,22 @@ class esn(object):
 			u_next = u0 + self.dt * rhs
 			x_next = u_next[:self.input_dim,None]
 			h_next = u_next[self.input_dim:,None]
+		elif solver=='Euler_fast':
+			dt_fast = self.dt/10
+			t_end = t0 + self.dt
+			t = np.float(t0)
+			u = np.copy(u0)
+			while t < t_end:
+				rhs = self.rhs(t, u)
+				u += self.dt * rhs
+				t += dt_fast
+			x_next = u[:self.input_dim,None]
+			h_next = u[self.input_dim:,None]
 		elif solver=='RK45':
 			t_span = [t0, t0+self.dt]
 			t_eval = np.array([t0+self.dt])
 			# sol = solve_ivp(fun=lambda t, y: self.rhs(t0, y0), t_span=t_span, y0=u0, method=testcontinuous_ode_int_method, rtol=testcontinuous_ode_int_rtol, atol=testcontinuous_ode_int_atol, max_step=testcontinuous_ode_int_max_step, t_eval=t_eval)
-			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt/10)
+			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt)
 			u_next = sol.y
 			x_next = u_next[:self.input_dim]
 			h_next = u_next[self.input_dim:]
@@ -129,6 +140,25 @@ class esn(object):
 			rhs = self.rhs(t0, u0)
 			h_next = h_reservoir[:,None] + self.dt * rhs[self.input_dim:,None]
 			x_next = x_input[:,None] + self.dt * self.W_out @ self.augmentHidden(h_next)
+		elif solver=='Euler_old_fast':
+			dt_fast = self.dt/10
+			t_end = t0 + self.dt
+			t = np.float(t0)
+			u = np.copy(u0)
+			while t < t_end:
+				rhs = self.rhs(t, u)
+				u[self.input_dim:] = u[self.input_dim:] + dt_fast * rhs[self.input_dim:]
+				u[:self.input_dim] = u[:self.input_dim]  + dt_fast * self.W_out @ self.augmentHidden(u[self.input_dim:])
+				t += dt_fast
+			x_next = u[:self.input_dim,None]
+			h_next = u[self.input_dim:,None]
+
+			# check with old (using dt_fast=self.dt)
+			# rhs_old = self.rhs(t0, u0)
+			# h_next_old = h_reservoir[:,None] + self.dt * rhs_old[self.input_dim:,None]
+			# x_next_old = x_input[:,None] + self.dt * self.W_out @ self.augmentHidden(h_next_old)
+			# if not (np.array_equal(h_next_old, h_next) and np.array_equal(x_next_old, x_next)):
+			# 	raise ValueError('New euler setup is not same as old!')
 
 		return x_next, h_next
 
@@ -152,6 +182,7 @@ class esn(object):
 			f_all = f_memory
 		else:
 			raise ValueError('need to learn SOMETHING duh.')
+
 		dx = self.W_out @ f_all
 
 		# get RHS for \dot{h} hidden/reservoir state
@@ -829,6 +860,13 @@ class esn(object):
 
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TRAIN = {:s}".format(var_name, var_name))
+
+		# add Dt_specific performance data
+		# for dt_fast in [self.dt*x for x in [2, 5, 10, 100, 200] ]:
+		# 	rmnse_avg, num_accurate_pred_005_avg, num_accurate_pred_050_avg, error_freq, predictions_all, truths_all, freq_pred, freq_true, sp_true, sp_pred, hidden_all = self.predictIndexes(train_input_sequence, training_ic_indexes, dt, "TRAIN", dt_fast=dt_fast, make_plots=False)
+		# 	for var_name in getNamesInterestingVars():
+		# 		exec("self.fast_dt['{:s}']['{:s}_TRAIN'] = {:s}".format(fast_dt, var_name, var_name))
+
 		return 0
 
 	def testingOnTestingSet(self):
@@ -844,6 +882,8 @@ class esn(object):
 
 		for var_name in getNamesInterestingVars():
 			exec("self.{:s}_TEST = {:s}".format(var_name, var_name))
+
+		# add Dt_specific performance data
 		return 0
 
 
