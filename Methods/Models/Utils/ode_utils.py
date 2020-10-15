@@ -20,8 +20,8 @@ class Physics(object):
 	    dudt[2] = u0[0] * u0[1] - beta*u0[2]
 	    return dudt
 
-	def lds(self, t0, u0, A=np.array([[0, 5],[-5,0]])):
-	    dudt = A @ u0
+	def lds(self, t0, u0, eps=0.1, A=np.array([[0, 5],[-5,0]])):
+	    dudt = eps*A @ u0
 	    return dudt
 
 	def set_rhs(self):
