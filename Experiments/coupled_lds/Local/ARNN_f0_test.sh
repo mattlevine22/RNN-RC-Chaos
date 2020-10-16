@@ -2,8 +2,10 @@
 
 cd ../../../Methods
 
-for F0 in 0 1
+for DR in {20..200..5}
 do
+  for F0 in 0 1
+  do
   python3 RUN.py esn \
   --f0_name lds \
   --learn_markov 0 \
@@ -23,14 +25,14 @@ do
   --noise_level 0 \
   --scaler Standard \
   --scaler_derivatives no \
-  --approx_reservoir_size 50 \
+  --approx_reservoir_size $DR \
   --degree 10 \
   --radius 0.8 \
   --sigma_input 1 \
   --regularization 0.00001 \
-  --dynamics_length 1000 \
+  --dynamics_length 2000 \
   --iterative_prediction_length 2000 \
-  --num_test_ICS 1 \
+  --num_test_ICS 10 \
   --solver auto \
   --number_of_epochs 1000000 \
   --learning_rate 0.001 \
@@ -64,4 +66,5 @@ do
   # --learning_rate 0.001 \
   # --reference_train_time 10 \
   # --buffer_train_time 0.5
+done
 done

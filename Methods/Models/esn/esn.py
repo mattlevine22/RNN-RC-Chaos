@@ -81,6 +81,7 @@ class esn(object):
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
 		self.dt = self.get_dt()
+		self.dt_fast_frac = params["dt_fast_frac"]
 		self.hidden_dynamics = params["hidden_dynamics"]
 		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
@@ -113,7 +114,7 @@ class esn(object):
 
 	# def solve(self, r0, x0, solver='Euler'):
 
-	def predict_next(self, x_input, h_reservoir, solver='Euler_old'):
+	def predict_next(self, x_input, h_reservoir, solver='Euler_fast'):
 
 		x_input = np.squeeze(x_input)
 		h_reservoir = np.squeeze(h_reservoir)
@@ -127,13 +128,13 @@ class esn(object):
 			x_next = u_next[:self.input_dim,None]
 			h_next = u_next[self.input_dim:,None]
 		elif solver=='Euler_fast':
-			dt_fast = self.dt/10
+			dt_fast = self.dt_fast_frac * self.dt
 			t_end = t0 + self.dt
 			t = np.float(t0)
 			u = np.copy(u0)
 			while t < t_end:
 				rhs = self.rhs(t, u)
-				u += self.dt * rhs
+				u += dt_fast * rhs
 				t += dt_fast
 			x_next = u[:self.input_dim,None]
 			h_next = u[self.input_dim:,None]
@@ -167,7 +168,7 @@ class esn(object):
 				x_next = x_input[:,None] + self.dt * rhs[:,None]
 
 		elif solver=='Euler_old_fast':
-			dt_fast = self.dt/10
+			dt_fast = self.dt_fast_frac * self.dt
 			t_end = t0 + self.dt
 			t = np.float(t0)
 			u = np.copy(u0)
@@ -254,7 +255,8 @@ class esn(object):
 		'rf_dim': 'N_RF',
 		'learn_markov': 'MARKOV',
 		'learn_memory': 'MEMORY',
-		'use_f0': 'f0'
+		'use_f0': 'f0',
+		'dt_fast_frac': 'DTF'
 		}
 		return keys
 
@@ -719,7 +721,7 @@ class esn(object):
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
 
-			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
+			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
@@ -760,7 +762,7 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 
-			if self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward'] and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
+			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')

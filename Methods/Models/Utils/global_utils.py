@@ -47,6 +47,8 @@ def writeToTestLogFile(logfile_test, model):
 			+ ":num_accurate_pred_050_avg_TRAIN:" + "{:.2f}".format(model.num_accurate_pred_050_avg_TRAIN) \
 			+ ":error_freq_TRAIN:" + "{:.2f}".format(model.error_freq_TRAIN) \
 			+ ":error_freq_TEST:" + "{:.2f}".format(model.error_freq_TEST) \
+			+ ":rmnse_avg_TRAIN:" + "{:.2f}".format(model.rmnse_avg_TRAIN) \
+			+ ":rmnse_avg_TEST:" + "{:.2f}".format(model.rmnse_avg_TEST) \
 			+ "\n"
 			)
 	return 0
@@ -389,10 +391,10 @@ def getESNParser(parser):
 	parser.add_argument("--N", help="N", type=int, required=True)
 	parser.add_argument("--N_used", help="N_used", type=int, required=True)
 	parser.add_argument("--RDIM", help="RDIM", type=int, required=True)
-	parser.add_argument("--approx_reservoir_size", help="approx_reservoir_size", type=int, required=True)
-	parser.add_argument("--degree", help="degree", type=float, required=True)
-	parser.add_argument("--radius", help="radius", type=float, required=True)
-	parser.add_argument("--sigma_input", help="sigma_input", type=float, required=True)
+	parser.add_argument("--approx_reservoir_size", help="approx_reservoir_size", type=int, default=2000)
+	parser.add_argument("--degree", help="degree", type=float, default=10)
+	parser.add_argument("--radius", help="radius", type=float, default=0.8)
+	parser.add_argument("--sigma_input", help="sigma_input", type=float, default=1)
 	parser.add_argument("--regularization", help="regularization", type=float, required=True)
 	parser.add_argument("--dynamics_length", help="dynamics_length", type=int, required=True)
 	parser.add_argument("--iterative_prediction_length", help="iterative_prediction_length", type=int, required=True)
@@ -423,6 +425,7 @@ def getESNParser(parser):
 	parser.add_argument("--rf_dim", help="number of random features", type=int, default=2000)
 	parser.add_argument("--use_f0", help="boolean to use physics-based known rhs", type=int, default=0)
 	parser.add_argument("--f0_name", help="which physics-based rhs to use", type=str, default='l63')
+	parser.add_argument("--dt_fast_frac", help="multiplier of dt for fast forward test simulations", type=float, default=1)
 	return parser
 
 def getMLPParser(parser):
