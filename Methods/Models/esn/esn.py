@@ -114,7 +114,7 @@ class esn(object):
 
 	# def solve(self, r0, x0, solver='Euler'):
 
-	def predict_next(self, x_input, h_reservoir, solver='Euler_fast'):
+	def predict_next(self, x_input, h_reservoir, solver='Euler_old_fast'):
 
 		x_input = np.squeeze(x_input)
 		h_reservoir = np.squeeze(h_reservoir)
