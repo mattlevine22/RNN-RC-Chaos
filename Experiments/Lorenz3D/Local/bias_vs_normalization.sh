@@ -6,7 +6,7 @@ cd ../../../Methods
 # 1. Without bias, standard-normalization fails, whereas no-norm is good
 # 2. With bias, standard normalization is rescued.
 # 3. With bias, no-norm is even better than before, and is better than standard-norm w/ bias.
-for BV in 1 0
+for BV in 0.01 1 0
 do
 python3 RUN.py esn \
 --bias_var $BV \
