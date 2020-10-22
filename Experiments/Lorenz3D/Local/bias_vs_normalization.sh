@@ -13,7 +13,6 @@ python3 RUN.py esn \
 --scaler standard \
 --sigma_input 8 \
 --gamma 20 \
---dont_redo 1 \
 --use_tilde 1 \
 --hidden_dynamics ARNN \
 --output_dynamics simpleRHS \
@@ -44,7 +43,6 @@ python3 RUN.py esn \
 --scaler no \
 --sigma_input 1 \
 --gamma 20 \
---dont_redo 1 \
 --use_tilde 1 \
 --hidden_dynamics ARNN \
 --output_dynamics simpleRHS \

@@ -70,7 +70,8 @@ class esn(object):
 		self.write_to_log = params["write_to_log"]
 		self.results_dir = params["results_dir"]
 		self.saving_path = params["saving_path"]
-		self.regularization = params["regularization"]
+		self.regularization_RC = params["regularization_RC"]
+		self.regularization_RF = params["regularization_RF"]
 		self.scaler_tt = params["scaler"]
 		self.scaler_tt_derivatives = params["scaler_derivatives"]
 		self.learning_rate = params["learning_rate"]
@@ -82,6 +83,7 @@ class esn(object):
 		self.model_name = self.createModelName(params)
 		self.dt = self.get_dt()
 		self.dt_fast_frac = params["dt_fast_frac"]
+		self.test_integrator = params["test_integrator"]
 		self.hidden_dynamics = params["hidden_dynamics"]
 		self.output_dynamics = params["output_dynamics"]
 		self.gamma = params["gamma"]
@@ -95,6 +97,7 @@ class esn(object):
 		self.rf_dim = params["rf_dim"]
 		self.rf_Win_bound = params["rf_Win_bound"]
 		self.rf_bias_bound = params["rf_bias_bound"]
+		self.component_wise = params["component_wise"]
 
 		####### Add physical mechanistic rhs "f0" ##########
 		self.use_f0 = params["use_f0"]
@@ -114,7 +117,8 @@ class esn(object):
 
 	# def solve(self, r0, x0, solver='Euler'):
 
-	def predict_next(self, x_input, h_reservoir, solver='Euler_old_fast'):
+	def predict_next(self, x_input, h_reservoir):
+		solver = self.test_integrator
 
 		x_input = np.squeeze(x_input)
 		h_reservoir = np.squeeze(h_reservoir)
@@ -162,7 +166,7 @@ class esn(object):
 				else:
 					f0 = 0
 				h_next = h_reservoir[:,None] + self.dt * rhs[self.input_dim:,None]
-				x_next = x_input[:,None] + self.dt * (f0 + self.W_out @ self.augmentHidden(h_next))
+				x_next = x_input[:,None] + self.dt * (f0 + self.W_out_memory @ self.augmentHidden(h_next))
 			elif self.learn_markov:
 				h_next = h_reservoir[:,None] # should be empty
 				x_next = x_input[:,None] + self.dt * rhs[:,None]
@@ -175,7 +179,46 @@ class esn(object):
 			while t < t_end:
 				rhs = self.rhs(t, u)
 				u[self.input_dim:] = u[self.input_dim:] + dt_fast * rhs[self.input_dim:]
-				u[:self.input_dim] = u[:self.input_dim]  + dt_fast * self.W_out @ self.augmentHidden(u[self.input_dim:])
+				if self.component_wise:
+					for k in range(self.input_dim):
+						kth_inds = np.arange((self.input_dim+k*self.reservoir_size),(self.input_dim+(k+1)*self.reservoir_size))
+						u[k] += dt_fast * self.W_out_memory @ self.augmentHidden(u[kth_inds])
+				else:
+					u[:self.input_dim] = u[:self.input_dim]  + dt_fast * self.W_out_memory @ self.augmentHidden(u[self.input_dim:])
+				t += dt_fast
+			x_next = u[:self.input_dim,None]
+			h_next = u[self.input_dim:,None]
+
+		elif solver=='Euler_old_fast_v2':
+			dt_fast = self.dt_fast_frac * self.dt
+			t_end = t0 + self.dt
+			t = np.float(t0)
+			u = np.copy(u0)
+			while t < t_end:
+				rhs = self.rhs(t, u)
+				# update reservoir state
+				u[self.input_dim:] = u[self.input_dim:] + dt_fast * rhs[self.input_dim:]
+
+				# update output state
+				fcorr = np.zeros(self.input_dim)
+				if self.learn_memory:
+					if self.component_wise:
+						for k in range(self.input_dim):
+							kth_inds = np.arange((self.input_dim+k*self.reservoir_size),(self.input_dim+(k+1)*self.reservoir_size))
+							fcorr[k] += self.W_out_memory @ self.augmentHidden(u[kth_inds])
+					else:
+						fcorr += self.W_out_memory @ self.augmentHidden(u[self.input_dim:])
+				if self.learn_markov:
+					if self.component_wise:
+						for k in range(self.input_dim):
+							kth_inds = np.arange((self.input_dim+k*self.reservoir_size),(self.input_dim+(k+1)*self.reservoir_size))
+							foo = np.tanh(self.W_in_markov @ u[k,None] + np.squeeze(self.b_h_markov))
+							fcorr[k] += self.W_out_memory @ foo
+					else:
+						foo = np.tanh(self.W_in_markov @ u[:self.input_dim] + np.squeeze(self.b_h_markov))
+						fcorr += self.W_out_markov @ foo
+
+				u[:self.input_dim] = u[:self.input_dim]  + dt_fast*fcorr
 				t += dt_fast
 			x_next = u[:self.input_dim,None]
 			h_next = u[self.input_dim:,None]
@@ -190,24 +233,53 @@ class esn(object):
 		return x_next, h_next
 
 	def rhs(self, t0, u0):
+
+		# if self.learn_markov and self.learn_memory:
+		# 	raise ValueError('Cant do both markov and memory yet!!!')
+
 		x_input = u0[:self.input_dim]
 		h_reservoir = u0[self.input_dim:]
 
 		# get RHS values for \dot{x} = C*[f_markov; f_memory]
+		f_error_markov = np.zeros(self.input_dim)
+		f_error_memory = np.zeros(self.input_dim)
 		if self.learn_markov:
-			f_markov = np.tanh(self.W_in_markov @ x_input + np.squeeze(self.b_h_markov))
+			if self.component_wise:
+				for k in range(self.input_dim):
+					foo = np.tanh(self.W_in_markov @ x_input[k,None] + np.squeeze(self.b_h_markov))
+					f_error_markov[k] = self.W_out_markov @ foo
+			else:
+				foo = np.tanh(self.W_in_markov @ x_input + np.squeeze(self.b_h_markov))
+				f_error_markov = self.W_out_markov @ foo
 		if self.learn_memory:
-			f_memory = self.augmentHidden(h_reservoir)
+			if self.component_wise:
+				for k in range(self.input_dim):
+					kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
+					f_error_memory[k] = self.W_out_memory @ self.augmentHidden(h_reservoir[kth_inds])
+			else:
+				f_error_memory = self.W_out_memory @ self.augmentHidden(h_reservoir)
 
 		# concatenate RHS for \dot{x} using RC-memory terms and RF-markovian terms
-		if self.learn_markov and self.learn_memory:
-			f_all = np.vstack((f_markov, f_memory))
-		elif self.learn_markov:
-			f_all = f_markov
-		elif self.learn_memory:
-			f_all = f_memory
-		else:
-			raise ValueError('need to learn SOMETHING duh.')
+		# fcorrection = np.zeros(self.input_dim)
+		# if self.learn_markov and self.learn_memory:
+		# 	f_all = np.vstack((f_markov, f_memory))
+		# 	fcorrection = self.W_out @ f_all
+		# elif self.learn_markov:
+		# 	if self.component_wise:
+		# 		for k in range(self.input_dim):
+		# 			kth_inds = np.arange((k*self.rf_dim),((k+1)*self.rf_dim))
+		# 			fcorrection[kth_inds] = self.W_out @ f_markov[kth_inds]
+		# 	else:
+		# 		fcorrection = self.W_out @ f_markov
+		# elif self.learn_memory:
+		# 	if self.component_wise:
+		# 		for k in range(self.input_dim):
+		# 			kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
+		# 			fcorrection[kth_inds] = self.W_out @ f_memory[kth_inds]
+		# 	else:
+		# 		fcorrection = self.W_out @ f_markov
+		# else:
+		# 	raise ValueError('need to learn SOMETHING duh.')
 
 		# add mechanistic rhs
 		if self.use_f0:
@@ -220,11 +292,18 @@ class esn(object):
 		else:
 			f0 = 0
 
-		dx = f0 + self.W_out @ f_all
+		dx = f0 + f_error_markov + f_error_memory
 
 		# get RHS for \dot{h} hidden/reservoir state
 		if self.learn_memory:
-			dh_reservoir = np.tanh(self.W_h_effective @ h_reservoir + self.W_in @ x_input + np.squeeze(self.b_h))
+			if self.component_wise:
+				# i = np.reshape(x_input, (-1,1))
+				dh_reservoir = np.zeros(self.input_dim*self.reservoir_size)
+				for k in range(self.input_dim):
+					kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
+					dh_reservoir[kth_inds] = np.tanh(self.W_h_effective @ h_reservoir[kth_inds] + self.W_in @ x_input[k,None] + np.squeeze(self.b_h))
+			else:
+				dh_reservoir = np.tanh(self.W_h_effective @ h_reservoir + self.W_in @ x_input + np.squeeze(self.b_h))
 			return np.hstack((dx, dh_reservoir))
 		else:
 			return dx
@@ -241,21 +320,23 @@ class esn(object):
 		'dynamics_length':'DL',
 		'noise_level':'NL',
 		'iterative_prediction_length':'IPL',
-		'regularization':'REG',
+		'regularization_RC':'REGRC',
+		'regularization_RF':'REGRF',
 		#'num_test_ICS':'NICS',
-		'worker_id':'WID',
+		# 'worker_id':'WID',
 		'hidden_dynamics': 'HD',
 		'output_dynamics': 'OD',
 		'gamma': 'GAM',
-		'lambda': 'LAM',
+		# 'lambda': 'LAM',
 		'use_tilde': 'USETILDE',
 		'scaler': 'SCALER',
-		'scaler_derivatives': 'DSCALER',
+		# 'scaler_derivatives': 'DSCALER',
 		'bias_var': 'BVAR',
 		'rf_dim': 'N_RF',
 		'learn_markov': 'MARKOV',
 		'learn_memory': 'MEMORY',
 		'use_f0': 'f0',
+		'test_integrator': 'INT',
 		'dt_fast_frac': 'DTF'
 		}
 		return keys
@@ -303,6 +384,19 @@ class esn(object):
 	# def getAugmentedStateSize(self):
 	#     return 2*self.reservoir_size
 
+	def set_h_zeros(self, type='wide'):
+		self.h_zeros = np.array([])
+		if self.learn_memory:
+			if self.component_wise:
+				if type=='wide':
+					self.h_zeros = np.zeros((self.reservoir_size, self.input_dim))
+				elif type=='tall':
+					self.h_zeros = np.zeros((self.input_dim*self.reservoir_size, 1))
+				else:
+					raise ValueError('type of structure for hidden reservoir state not recognized. Choose tall or wide.')
+			else:
+				self.h_zeros = np.zeros((self.reservoir_size, 1))
+
 	def train(self):
 		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
 			raise ValueError('Model has already run for this configuration. Exiting with an error.')
@@ -333,14 +427,19 @@ class esn(object):
 
 		# Setting the reservoir size automatically to avoid overfitting
 		if self.learn_markov:
-			W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim))
+			if self.component_wise:
+				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, 1))
+			else:
+				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim))
 			b_h_markov = np.random.uniform(low=-self.rf_bias_bound, high=self.rf_bias_bound, size=(self.rf_dim, 1))
 
-		h_zeros = np.array([])
 		if self.learn_memory:
 			print("Initializing the reservoir weights...")
-			nodes_per_input = int(np.ceil(self.approx_reservoir_size/input_dim))
-			self.reservoir_size = int(input_dim*nodes_per_input)
+			if self.component_wise:
+				self.reservoir_size = self.approx_reservoir_size
+			else:
+				nodes_per_input = int(np.ceil(self.approx_reservoir_size/input_dim))
+				self.reservoir_size = int(input_dim*nodes_per_input)
 			self.sparsity = self.degree/self.reservoir_size;
 			print("NETWORK SPARSITY: {:}".format(self.sparsity))
 			print("Computing sparse hidden to hidden weight matrix...")
@@ -348,10 +447,16 @@ class esn(object):
 
 			# Initializing the input weights
 			print("Initializing the input weights...")
-			W_in = np.zeros((self.reservoir_size, input_dim))
-			q = int(self.reservoir_size/input_dim)
-			for i in range(0, input_dim):
-				W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
+			if self.component_wise:
+				W_in = np.zeros((self.reservoir_size, 1))
+				q = self.reservoir_size
+				for i in range(0, 1):
+					W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
+			else:
+				W_in = np.zeros((self.reservoir_size, input_dim))
+				q = int(self.reservoir_size/input_dim)
+				for i in range(0, input_dim):
+					W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
 			# if self.output_dynamics:
 			# 	W_in = W_in / dt
 
@@ -361,9 +466,6 @@ class esn(object):
 			# Set the diffusion term
 			gammaI = self.gamma * sparse.eye(self.reservoir_size)
 			I = sparse.eye(self.reservoir_size)
-
-			# Initialize reservoir state
-			h_zeros = np.zeros((self.reservoir_size, 1))
 
 			if self.hidden_dynamics in ['ARNN', 'LARNN_forward']:
 				W_h_effective = (W_h-W_h.T - gammaI)
@@ -375,18 +477,33 @@ class esn(object):
 
 		print("TRAINING: Dynamics prerun...")
 		# H_dyn = np.zeros((dynamics_length, self.getAugmentedStateSize(), 1))
-		h = np.copy(h_zeros)
+
+		# Initialize reservoir state
+		self.set_h_zeros()
+		h = np.copy(self.h_zeros)
 		for t in range(dynamics_length):
 			if self.display_output == True:
 				print("TRAINING - Dynamics prerun: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(train_input_sequence[t], (-1,1))
 			if self.learn_memory:
 				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
-					h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
+					if self.component_wise:
+						for k in range(self.input_dim):
+							h[:,k] += self.dt * np.tanh(W_h_effective @ h[:,k] + W_in @ i[k] + np.squeeze(b_h))
+					else:
+						h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
 				elif self.hidden_dynamics=='LARNN_forward':
-					h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
+					if self.component_wise:
+						for k in range(self.input_dim):
+							h[:,k] = (I + self.dt*W_h_effective) @ h[:,k] + self.dt * np.tanh(W_in @ i[k])
+					else:
+						h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
 				else:
-					h = np.tanh(W_h @ h + W_in @ i)
+					if self.component_wise:
+						for k in range(self.input_dim):
+							h[:,k] = np.tanh(W_h @ h[:,k] + W_in @ i[k])
+					else:
+						h = np.tanh(W_h @ h + W_in @ i)
 				# H_dyn[t] = self.augmentHidden(h)
 
 		print("\n")
@@ -402,8 +519,20 @@ class esn(object):
 
 		if self.solver == "pinv":
 			NORMEVERY = 10
-			HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
-			YTH = np.zeros((input_dim, self.getAugmentedStateSize()))
+			if self.learn_memory:
+				HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
+				if self.component_wise:
+					YTH = np.zeros((1, self.getAugmentedStateSize()))
+				else:
+					YTH = np.zeros((input_dim, self.getAugmentedStateSize()))
+			if self.learn_markov:
+				HmarkTHmark = np.zeros( (self.rf_dim, self.rf_dim))
+				if self.component_wise:
+					YTHmark = np.zeros( (1, self.rf_dim))
+				else:
+					YTHmark = np.zeros( (input_dim, self.rf_dim))
+			if self.learn_markov and self.learn_memory:
+				HmarkTHmem = np.zeros( (self.rf_dim, self.getAugmentedStateSize()))
 
 		H = []
 		H_markov = []
@@ -419,17 +548,39 @@ class esn(object):
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
 			if self.learn_memory:
 				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
-					h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
+					if self.component_wise:
+						for k in range(input_dim):
+							h[:,k] += self.dt * np.tanh(W_h_effective @ h[:,k] + W_in @ i[k] + np.squeeze(b_h))
+					else:
+						h = h + self.dt * np.tanh(W_h_effective @ h + W_in @ i + b_h)
 				elif self.hidden_dynamics=='LARNN_forward':
-					h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
+					if self.component_wise:
+						for k in range(input_dim):
+							h[:,k] = (I + self.dt*W_h_effective) @ h[:,k] + self.dt * np.tanh(W_in @ i[k])
+					else:
+						h = (I + self.dt*W_h_effective) @ h + self.dt * np.tanh(W_in @ i)
 				else:
-					h = np.tanh(W_h @ h + W_in @ i)
+					if self.component_wise:
+						for k in range(input_dim):
+							h[:,k] = np.tanh(W_h @ h[:,k] + W_in @ i[k])
+					else:
+						h = np.tanh(W_h @ h + W_in @ i)
 				# AUGMENT THE HIDDEN STATE
-				h_aug = self.augmentHidden(h)
-				H.append(h_aug[:,0])
+				if self.component_wise:
+					for k in range(input_dim):
+						h_aug = self.augmentHidden(h[:,k,None])
+						H.append(h_aug[:,0])
+				else:
+					h_aug = self.augmentHidden(h)
+					H.append(h_aug[:,0])
 			if self.learn_markov:
-				h_markov = np.tanh(W_in_markov @ i + b_h_markov)
-				H_markov.append(h_markov[:,0])
+				if self.component_wise:
+					for k in range(input_dim):
+						h_markov = np.tanh(W_in_markov @ i[k,None] + b_h_markov)
+						H_markov.append(h_markov[:,0])
+				else:
+					h_markov = np.tanh(W_in_markov @ i + b_h_markov)
+					H_markov.append(h_markov[:,0])
 
 			# if self.learn_markov and self.learn_memory:
 			# 	h_all = np.vstack((h_markov, h_aug))
@@ -461,23 +612,55 @@ class esn(object):
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 
-			Y.append(target[:,0])
+			if self.component_wise:
+				for k in range(self.input_dim):
+					Y.append(target[k,0])
+			else:
+				Y.append(target[:,0])
+
 			if self.solver == "pinv" and (t % NORMEVERY == 0):
 				# Batched approach used in the pinv case
-				H = np.array(H)
 				Y = np.array(Y)
-				HTH += H.T @ H
-				YTH += Y.T @ H
+				# RC-only stuff
+				if self.learn_memory:
+					H = np.array(H)
+					HTH += H.T @ H
+					YTH += Y.T @ H
+
+				# RF-only stuff
+				if self.learn_markov:
+					H_markov = np.array(H_markov)
+					HmarkTHmark += H_markov.T @ H_markov
+					YTHmark += Y.T @ H_markov
+
+				# RC + RF joint stuff
+				if self.learn_memory and self.learn_markov:
+					HmarkTHmem += H_markov.T @ H
+
 				H = []
 				Y = []
+				H_markov = []
+
 
 		self.first_train_vec = train_input_sequence[(dynamics_length+1),:]
 		if self.solver == "pinv" and (len(H) != 0):
 			# ADDING THE REMAINING BATCH
-			H = np.array(H)
 			Y = np.array(Y)
-			HTH+=H.T @ H
-			YTH+=Y.T @ H
+			if self.learn_memory:
+				H = np.array(H)
+				HTH += H.T @ H
+				YTH += Y.T @ H
+
+			# RF-only stuff
+			if self.learn_markov:
+				H_markov = np.array(H_markov)
+				HmarkTHmark += H_markov.T @ H_markov
+				YTHmark += Y.T @ H_markov
+
+			# RC + RF joint stuff
+			if self.learn_memory and self.learn_markov:
+				HmarkTHmem += H_markov.T @ H
+
 			print("TEACHER FORCING ENDED.")
 			print(np.shape(H))
 			print(np.shape(Y))
@@ -505,9 +688,26 @@ class esn(object):
 			"""
 			Learns mapping H -> Y with Penrose Pseudo-Inverse
 			"""
-			I = np.identity(np.shape(HTH)[1])
-			pinv_ = scipypinv2(HTH + self.regularization*I)
-			W_out = YTH @ pinv_
+			if self.learn_memory and self.learn_markov:
+				Z = np.hstack( ( np.vstack( (HTH, HmarkTHmem) ), np.vstack( (HmarkTHmem.T, HmarkTHmark) ) ) )
+				regI = np.identity(Z.shape[0])
+				regI[:self.reservoir_size,:self.reservoir_size] *= self.regularization_RC
+				regI[self.reservoir_size:,self.reservoir_size:] *= self.regularization_RF
+				pinv_ = scipypinv2(Z + regI)
+
+				YTH_stack = np.hstack( (YTH, YTHmark) )
+				W_out_all = YTH_stack @ pinv_
+				W_out_memory = W_out_all[:,:self.reservoir_size]
+				W_out_markov = W_out_all[:,self.reservoir_size:]
+
+			elif self.learn_markov:
+				I = np.identity(np.shape(HmarkTHmark)[1])
+				pinv_ = scipypinv2(HmarkTHmark + self.regularization_RF*I)
+				W_out_markov = YTHmark @ pinv_
+			elif self.learn_memory:
+				I = np.identity(np.shape(HTH)[1])
+				pinv_ = scipypinv2(HTH + self.regularization_RC*I)
+				W_out_memory = YTH @ pinv_
 
 		elif self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
 			"""
@@ -524,22 +724,25 @@ class esn(object):
 			H = np.array(H)
 			H_markov = np.array(H_markov)
 			if self.learn_markov and self.learn_memory:
-				H_all = np.hstack((H,H_markov))
+				raise ValueError('Not yet ready to jointly learn both markov and memory terms with ridge regression')
+				# H_all = np.hstack((H,H_markov))
 			elif self.learn_markov:
 				H_all = H_markov
+				alpha = self.regularization_RF
 			elif self.learn_memory:
 				H_all = H
+				alpha = self.regularization_RC
 
+			if self.learn_markov or self.learn_memory:
+				ridge = Ridge(alpha=alpha, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
+				ridge.fit(H_all, Y)
+				W_out = ridge.coef_
+				H_all = np.array(H_all)
 
-			ridge = Ridge(alpha=self.regularization, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
-			# ridge = Lasso(alpha=self.regularization, fit_intercept=False, normalize=False, copy_X=True)
-			# print(np.shape(H))
-			# print(np.shape(Y))
-			# print("##")
-
-			ridge.fit(H_all, Y)
-			W_out = ridge.coef_
-			H_all = np.array(H_all)
+			if self.learn_markov:
+				W_out_markov = W_out
+			elif self.learn_memory:
+				W_out_memory = W_out
 
 			if self.learn_memory:
 				## Plot H
@@ -645,41 +848,46 @@ class esn(object):
 			raise ValueError("Undefined solver.")
 
 		print("FINALISING WEIGHTS...")
-		self.W_out = W_out
 		if self.learn_markov:
 			self.b_h_markov = b_h_markov
 			self.W_in_markov = W_in_markov
+			self.W_out_markov = W_out_markov
+			plotMatrix(self, self.W_out_markov, 'W_out_markov')
 		else:
 			self.b_h_markov = None
 			self.W_in_markov = None
+			self.W_out_markov = None
 
 		if self.learn_memory:
 			self.b_h = b_h
 			self.W_in = W_in
 			self.W_h = W_h
 			self.W_h_effective = W_h_effective
+			self.W_out_memory = W_out_memory
+			plotMatrix(self, self.W_out_memory, 'W_out_memory')
 		else:
 			self.b_h = None
 			self.W_in = None
 			self.W_h = None
 			self.W_h_effective = None
+			self.W_out_memory = None
 
 
 		print("COMPUTING PARAMETERS...")
-		self.n_trainable_parameters = np.size(self.W_out)
-		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out) + np.size(self.W_in_markov) + np.size(self.b_h_markov)
+		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
+		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out_memory) + np.size(self.W_out_markov) + np.size(self.W_in_markov) + np.size(self.b_h_markov)
 		print("Number of trainable parameters: {}".format(self.n_trainable_parameters))
 		print("Total number of parameters: {}".format(self.n_model_parameters))
 		print("SAVING MODEL...")
 		self.saveModel()
 
 		# plot matrix spectrum
-		plotMatrix(self, self.W_out, 'W_out')
 		if self.plot_matrix_spectrum:
 			plotMatrixSpectrum(self, self.W_h_effective , 'W_h_effective')
 			plotMatrixSpectrum(self, self.W_in, 'B')
-			plotMatrixSpectrum(self, self.W_out, 'C')
-			plotMatrixSpectrum(self, self.W_in @self.W_out, 'BC')
+			plotMatrixSpectrum(self, self.W_out_markov, 'C_markov')
+			plotMatrixSpectrum(self, self.W_out_memory, 'C_memory')
+			# plotMatrixSpectrum(self, self.W_in @self.W_out, 'BC')
 
 	def isWallTimeLimit(self):
 		training_time = time.time() - self.start_time
@@ -695,7 +903,8 @@ class esn(object):
 		W_in_markov = self.W_in_markov
 		b_h = self.b_h
 		W_h = self.W_h
-		W_out = self.W_out
+		W_out_markov = self.W_out_markov
+		W_out_memory = self.W_out_memory
 		W_in = self.W_in
 		W_h_effective = self.W_h_effective
 		dynamics_length = self.dynamics_length
@@ -703,10 +912,9 @@ class esn(object):
 
 		if self.learn_memory:
 			self.reservoir_size, _ = np.shape(W_h)
-			I = sparse.eye(self.reservoir_size)
-			h_zeros = np.zeros((self.reservoir_size, 1))
-		else:
-			h_zeros = np.array([])
+
+		# Initialize reservoir state
+		self.set_h_zeros(type='tall')
 
 		N = np.shape(input_sequence)[0]
 
@@ -715,13 +923,13 @@ class esn(object):
 
 		prediction_warm_up = []
 		hidden_warm_up = []
-		h = np.copy(h_zeros)
+		h = np.copy(self.h_zeros)
 		for t in range(1,dynamics_length):
 			if self.display_output == True:
 				print("PREDICTION - Dynamics pre-run: T {:}/{:}, {:2.3f}%".format(t, dynamics_length, t/dynamics_length*100), end="\r")
 			i = np.reshape(input_sequence[t-1], (-1,1))
 
-			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
+			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"]:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
@@ -762,7 +970,7 @@ class esn(object):
 			if self.display_output == True:
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 
-			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"] and not self.learn_markov*self.learn_memory:
+			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"]:
 				out, h = self.predict_next(i, h)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
@@ -1017,7 +1225,8 @@ class esn(object):
 				data = pickle.load(file)
 				self.W_in_markov = data["W_in_markov"]
 				self.b_h_markov = data["b_h_markov"]
-				self.W_out = data["W_out"]
+				self.W_out_markov = data["W_out_markov"]
+				self.W_out_memory = data["W_out_memory"]
 				self.W_in = data["W_in"]
 				self.W_h = data["W_h"]
 				self.W_h_effective = data["W_h_effective"]
@@ -1054,7 +1263,8 @@ class esn(object):
 		"total_training_time":self.total_training_time,
 		"W_in_markov":self.W_in_markov,
 		"b_h_markov":self.b_h_markov,
-		"W_out":self.W_out,
+		"W_out_markov":self.W_out_markov,
+		"W_out_memory":self.W_out_memory,
 		"W_in":self.W_in,
 		"W_h":self.W_h,
 		"W_h_effective":self.W_h_effective,

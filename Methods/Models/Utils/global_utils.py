@@ -395,7 +395,8 @@ def getESNParser(parser):
 	parser.add_argument("--degree", help="degree", type=float, default=10)
 	parser.add_argument("--radius", help="radius", type=float, default=0.8)
 	parser.add_argument("--sigma_input", help="sigma_input", type=float, default=1)
-	parser.add_argument("--regularization", help="regularization", type=float, required=True)
+	parser.add_argument("--regularization_RC", help="regularization for RC", type=float, default=0)
+	parser.add_argument("--regularization_RF", help="regularization for RF", type=float, default=0)
 	parser.add_argument("--dynamics_length", help="dynamics_length", type=int, required=True)
 	parser.add_argument("--iterative_prediction_length", help="iterative_prediction_length", type=int, required=True)
 	parser.add_argument("--num_test_ICS", help="num_test_ICS", type=int, required=True)
@@ -420,12 +421,14 @@ def getESNParser(parser):
 	parser.add_argument("--bias_var", help="variance of gaussian hidden bias vector", type=float, default=1)
 	parser.add_argument("--learn_markov", help="boolean to include RF markovian term", type=int, default=0)
 	parser.add_argument("--learn_memory", help="boolean to include reservoir states", type=int, default=1)
+	parser.add_argument("--component_wise", help="boolean to do component-wise learning", type=int, default=0)
 	parser.add_argument("--rf_Win_bound", help="bounds on uniform distribution from which to sample Win RF map", type=float, default=0.005)
 	parser.add_argument("--rf_bias_bound", help="bounds on uniform distribution from which to sample bias term in RF map", type=float, default=4)
 	parser.add_argument("--rf_dim", help="number of random features", type=int, default=2000)
 	parser.add_argument("--use_f0", help="boolean to use physics-based known rhs", type=int, default=0)
 	parser.add_argument("--f0_name", help="which physics-based rhs to use", type=str, default='l63')
 	parser.add_argument("--dt_fast_frac", help="multiplier of dt for fast forward test simulations", type=float, default=1)
+	parser.add_argument("--test_integrator", help="choose which integrator to use in predict_next function", type=str, default='Euler_old_fast')
 	return parser
 
 def getMLPParser(parser):

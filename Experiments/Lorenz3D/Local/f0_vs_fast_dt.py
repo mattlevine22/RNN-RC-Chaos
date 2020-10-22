@@ -19,13 +19,14 @@ color_dict = dict(six.iteritems(colors.cnames))
 font = {'size'   : 20}
 matplotlib.rc('font', **font)
 
+# MY_STR = 'RNN-esn_auto-RDIM_3-N_used_5000-SIZE_2000-D_10-RADIUS_0.8-SIGMA_1-DL_1000-NL_0-IPL_2000-REG_0.0-WID_0-HD_-OD_simpleRHS-GAM_0-LAM_0-USETILDE_1-SCALER_standard-DSCALER_no-BVAR_1-N_RF_2000-MARKOV_1-MEMORY_0-f0_{use_f0}-DTF_{dtf}'
+MY_STR = 'RNN-esn_auto-RDIM_3-N_used_50000-SIZE_2000-D_10-RADIUS_0.8-SIGMA_1-DL_10000-NL_0-IPL_20000-REG_0.0-WID_0-HD_-OD_simpleRHS-GAM_0-LAM_0-USETILDE_1-SCALER_standard-DSCALER_no-BVAR_1-N_RF_1000-MARKOV_1-MEMORY_0-f0_{use_f0}-DTF_{dtf}'
 
-def main():
+def main(str_frame=MY_STR):
     base_dir = '/Users/matthewlevine/code_projects/RNN-RC-Chaos/Results/Lorenz3D'
     log_dir = os.path.join(base_dir,'Logfiles')
     summary_dir = os.path.join(base_dir,'Summary_Figures')
     os.makedirs(summary_dir, exist_ok=True)
-    str_frame = 'RNN-esn_auto-RDIM_3-N_used_5000-SIZE_2000-D_10-RADIUS_0.8-SIGMA_1-DL_1000-NL_0-IPL_2000-REG_0.0-WID_0-HD_-OD_simpleRHS-GAM_0-LAM_0-USETILDE_1-SCALER_standard-DSCALER_no-BVAR_1-N_RF_2000-MARKOV_1-MEMORY_0-f0_{use_f0}-DTF_{dtf}'
     df = get_experiment_summary(log_dir=log_dir, str_frame=str_frame)
 
     metrics = [c for c in df.columns if c not in ['dtf', 'f0']]

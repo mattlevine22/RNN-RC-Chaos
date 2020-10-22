@@ -6,8 +6,15 @@
 #!/usr/bin/env python
 import numpy as np
 import io
-import os
+import os, sys
 import pdb
+
+base_dir = '/Users/matthewlevine/code_projects/RNN-RC-Chaos'
+all_utils_dir = os.path.join(base_dir, "AllUtils")
+sys.path.insert(0, all_utils_dir)
+from odelibrary import L96M
+
+
 
 class Physics(object):
 	def __init__(self, name='l63', params=None):
@@ -23,6 +30,10 @@ class Physics(object):
 	def lds(self, t0, u0, eps=0.1, A=np.array([[0, 5],[-5,0]])):
 	    dudt = eps*A @ u0
 	    return dudt
+
+	def l96slow(self, t0, u0):
+		l96m = L96M()
+		return l96m.slow(u0, t0)
 
 	def set_rhs(self):
 		return
