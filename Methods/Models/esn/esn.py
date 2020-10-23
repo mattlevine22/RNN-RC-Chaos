@@ -78,7 +78,8 @@ class esn(object):
 		self.number_of_epochs = params["number_of_epochs"]
 		self.solver = str(params["solver"])
 		##########################################
-		self.scaler = scaler(tt=self.scaler_tt, tt_derivative=self.scaler_tt_derivatives)
+		self.component_wise = params["component_wise"]
+		self.scaler = scaler(tt=self.scaler_tt, tt_derivative=self.scaler_tt_derivatives, component_wise=self.component_wise)
 		self.noise_level = params["noise_level"]
 		self.model_name = self.createModelName(params)
 		self.dt = self.get_dt()
@@ -97,7 +98,6 @@ class esn(object):
 		self.rf_dim = params["rf_dim"]
 		self.rf_Win_bound = params["rf_Win_bound"]
 		self.rf_bias_bound = params["rf_bias_bound"]
-		self.component_wise = params["component_wise"]
 
 		####### Add physical mechanistic rhs "f0" ##########
 		self.use_f0 = params["use_f0"]

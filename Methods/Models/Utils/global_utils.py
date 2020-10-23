@@ -126,7 +126,9 @@ def addNoise(data, percent):
 	return data
 
 class scaler(object):
-	def __init__(self, tt, tt_derivative):
+	def __init__(self, tt, tt_derivative, component_wise=False):
+
+		self.component_wise = component_wise
 		self.tt = tt
 		self.data_min = 0
 		self.data_max = 0
@@ -145,11 +147,15 @@ class scaler(object):
 		# data_mean = np.mean(train_input_sequence,0)
 		# data_std = np.std(train_input_sequence,0)
 		# train_input_sequence = (train_input_sequence-data_mean)/data_std
+		if self.component_wise:
+			axis = None
+		else:
+			axis = 0
 		if reuse == None:
-			self.data_mean = np.mean(input_sequence,0)
-			self.data_std = np.std(input_sequence,0)
-			self.data_min = np.min(input_sequence,0)
-			self.data_max = np.max(input_sequence,0)
+			self.data_mean = np.mean(input_sequence,axis=axis)
+			self.data_std = np.std(input_sequence,axis=axis)
+			self.data_min = np.min(input_sequence,axis=axis)
+			self.data_max = np.max(input_sequence,axis=axis)
 
 			if self.tt in ["Standard2", "standard2"]:
 				self.data_mean = np.mean(self.data_mean)
@@ -190,11 +196,16 @@ class scaler(object):
 		# data_mean = np.mean(train_input_sequence,0)
 		# data_std = np.std(train_input_sequence,0)
 		# train_input_sequence = (train_input_sequence-data_mean)/data_std
+		if self.component_wise:
+			axis = None
+		else:
+			axis = 0
+
 		if reuse == None:
-			self.derivative_mean = np.mean(input_sequence,0)
-			self.derivative_std = np.std(input_sequence,0)
-			self.derivative_min = np.min(input_sequence,0)
-			self.derivative_max = np.max(input_sequence,0)
+			self.derivative_mean = np.mean(input_sequence,axis=axis)
+			self.derivative_std = np.std(input_sequence,axis=axis)
+			self.derivative_min = np.min(input_sequence,axis=axis)
+			self.derivative_max = np.max(input_sequence,axis=axis)
 		if self.tt_derivative == "MinMaxZeroOne":
 			input_sequence = np.array((input_sequence-self.derivative_min)/(self.derivative_max-self.derivative_min))
 		elif self.tt_derivative == "Standard" or self.tt_derivative == "standard":
@@ -412,7 +423,7 @@ def getESNParser(parser):
 	parser.add_argument("--buffer_train_time", help="The buffer train time to save the model in hours", type=float, default=0.5)
 	parser.add_argument("--hidden_dynamics", help="If true (1), use Euler style recurrent dynamics. Else, (0)", type=str, default='')
 	parser.add_argument("--output_dynamics", help="Type of dynamics on output equation", type=str, default="None")
-	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0)
+	parser.add_argument("--gamma", help="Diffusion term for Euler reservoir", type=float, default=0.01)
 	parser.add_argument("--lambda", help="Decay term for output dynamics", type=float, default=0)
 	parser.add_argument("--plot_matrix_spectrum", help="boolean to compute matrix spectrums", type=int, default=0)
 	parser.add_argument("--use_tilde", help="boolean to use r-tilde even/odd squaring", type=int, default=1)
