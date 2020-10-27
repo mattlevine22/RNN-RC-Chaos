@@ -493,58 +493,23 @@ class esn(object):
 		print("\n")
 		return h
 
+	def doTeacherForcing(self, train_input_sequence, tl, dynamics_length, h):
 
+		self.H_markov = []
+		self.H_memory = []
+		H_memory = []
+		H_markov = []
+		Y = []
 
-	def train(self):
-		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
-			raise ValueError('Model has already run for this configuration. Exiting with an error.')
-		self.start_time = time.time()
-		dynamics_length = self.dynamics_length
-		input_dim = self.input_dim
-		N_used = self.N_used
+		Y_true = []
+		Y_all = []
+		X = [] # true ground states
 
-		with open(self.train_data_path, "rb") as file:
-			# Pickle the "data" dictionary using the highest protocol available.
-			data = pickle.load(file)
-			train_input_sequence = data["train_input_sequence"]
-			print("Adding noise to the training data. {:} per mille ".format(self.noise_level))
-			train_input_sequence = addNoise(train_input_sequence, self.noise_level)
-			N_all, dim = np.shape(train_input_sequence)
-			if input_dim > dim: raise ValueError("Requested input dimension is wrong.")
-			train_input_sequence = train_input_sequence[:N_used, :input_dim]
-			dt = data["dt"]
-			del data
-
-		print("##Using {:}/{:} dimensions and {:}/{:} samples ##".format(input_dim, dim, N_used, N_all))
-		if N_used > N_all: raise ValueError("Not enough samples in the training data.")
-		print("SCALING")
-
-		train_input_sequence = self.scaler.scaleData(train_input_sequence)
-
-		N, input_dim = np.shape(train_input_sequence)
-
-		# Setting the reservoir variables
-		self.set_random_weights()
-
-		# TRAINING LENGTH
-		tl = N - dynamics_length
-
-		print("TRAINING: Dynamics prerun...")
-		# H_dyn = np.zeros((dynamics_length, self.getAugmentedStateSize(), 1))
-
-		# Initialize reservoir state
-		self.set_h_zeros()
-		h = self.get_h_DL(dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
-
-
-		# # FOR PLOTTING THE DYNAMICS
-		# dyn_plot_max = 1000
-		# H_dyn_plot = H_dyn[:,:dyn_plot_max,0]
-		# fig_path = self.saving_path + self.fig_dir + self.model_name + "/H_dyn_prerun_plot.png"
-		# plt.plot(H_dyn_plot)
-		# plt.title('Dynamics prerun')
-		# plt.savefig(fig_path)
-		# plt.close()
+		HTH = None
+		YTH = None
+		HmarkTHmark = None
+		YTHmark = None
+		HmarkTHmem = None
 
 		if self.solver == "pinv":
 			NORMEVERY = 10
@@ -553,22 +518,17 @@ class esn(object):
 				if self.component_wise:
 					YTH = np.zeros((1, self.getAugmentedStateSize()))
 				else:
-					YTH = np.zeros((input_dim, self.getAugmentedStateSize()))
+					YTH = np.zeros((self.input_dim, self.getAugmentedStateSize()))
 			if self.learn_markov:
 				HmarkTHmark = np.zeros( (self.rf_dim, self.rf_dim))
 				if self.component_wise:
 					YTHmark = np.zeros( (1, self.rf_dim))
 				else:
-					YTHmark = np.zeros( (input_dim, self.rf_dim))
+					YTHmark = np.zeros( (self.input_dim, self.rf_dim))
 			if self.learn_markov and self.learn_memory:
 				HmarkTHmem = np.zeros( (self.rf_dim, self.getAugmentedStateSize()))
 
-		H = []
-		H_markov = []
-		Y = []
-		Y_true = []
 
-		X = [] # true ground states
 		print("TRAINING: Teacher forcing...")
 
 		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
@@ -579,46 +539,40 @@ class esn(object):
 			if self.learn_memory:
 				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
 					if self.component_wise:
-						for k in range(input_dim):
+						for k in range(self.input_dim):
 							h[:,k] += self.dt * np.tanh(self.W_h_effective @ h[:,k] + self.W_in @ i[k] + np.squeeze(self.b_h))
 					else:
 						h = h + self.dt * np.tanh(self.W_h_effective @ h + self.W_in @ i + self.b_h)
 				elif self.hidden_dynamics=='LARNN_forward':
 					if self.component_wise:
-						for k in range(input_dim):
+						for k in range(self.input_dim):
 							h[:,k] = (I + self.dt*self.W_h_effective) @ h[:,k] + self.dt * np.tanh(self.W_in @ i[k])
 					else:
 						h = (I + self.dt*self.W_h_effective) @ h + self.dt * np.tanh(self.W_in @ i)
 				else:
 					if self.component_wise:
-						for k in range(input_dim):
+						for k in range(self.input_dim):
 							h[:,k] = np.tanh(W_h @ h[:,k] + self.W_in @ i[k])
 					else:
 						h = np.tanh(W_h @ h + self.W_in @ i)
 				# AUGMENT THE HIDDEN STATE
 				if self.component_wise:
-					for k in range(input_dim):
+					for k in range(self.input_dim):
 						h_aug = self.augmentHidden(h[:,k,None])
-						H.append(h_aug[:,0])
+						H_memory.append(h_aug[:,0])
 				else:
 					h_aug = self.augmentHidden(h)
-					H.append(h_aug[:,0])
+					H_memory.append(h_aug[:,0])
 			if self.learn_markov:
 				if self.component_wise:
-					for k in range(input_dim):
+					for k in range(self.input_dim):
 						h_markov = np.tanh(self.W_in_markov @ i[k,None] + self.b_h_markov)
 						H_markov.append(h_markov[:,0])
 				else:
 					h_markov = np.tanh(self.W_in_markov @ i + self.b_h_markov)
 					H_markov.append(h_markov[:,0])
 
-			# if self.learn_markov and self.learn_memory:
-			# 	h_all = np.vstack((h_markov, h_aug))
-			# elif self.learn_markov:
-			# 	h_all = h_markov
-			# elif self.learn_memory:
-			# 	h_all = h_aug
-
+			# collect data info
 			if self.output_dynamics=='simpleRHS':
 				# FORWARD DIFFERENCE---infer derivative at time t+dl
 				t0=0
@@ -650,14 +604,19 @@ class esn(object):
 				Y.append(target[:,0])
 				X.append(train_input_sequence[t+dynamics_length,:])
 
-			if self.solver == "pinv" and (t % NORMEVERY == 0):
+			Y_all += Y
+			self.H_markov += H_markov
+			self.H_memory += H_memory
+
+			last_batch = t==(tl - matt_offset - 1)
+			if self.solver == "pinv" and ((t % NORMEVERY == 0) or last_batch):
 				# Batched approach used in the pinv case
 				Y = np.array(Y)
 				# RC-only stuff
 				if self.learn_memory:
-					H = np.array(H)
-					HTH += H.T @ H
-					YTH += Y.T @ H
+					H_memory = np.array(H_memory)
+					HTH += H_memory.T @ H_memory
+					YTH += Y.T @ H_memory
 
 				# RF-only stuff
 				if self.learn_markov:
@@ -667,54 +626,44 @@ class esn(object):
 
 				# RC + RF joint stuff
 				if self.learn_memory and self.learn_markov:
-					HmarkTHmem += H_markov.T @ H
+					HmarkTHmem += H_markov.T @ H_memory
 
-				H = []
 				Y = []
 				H_markov = []
+				H_memory = []
 
 
-		self.first_train_vec = train_input_sequence[(dynamics_length+1),:]
-		if self.solver == "pinv" and (len(H) != 0):
-			# ADDING THE REMAINING BATCH
-			Y = np.array(Y)
-			if self.learn_memory:
-				H = np.array(H)
-				HTH += H.T @ H
-				YTH += Y.T @ H
+		print("TEACHER FORCING ENDED.")
+		print('\nmax(x)=',np.max(train_input_sequence))
+		print('mean(x)=',np.mean(train_input_sequence))
+		print('std(x)=',np.std(train_input_sequence))
 
-			# RF-only stuff
-			if self.learn_markov:
-				H_markov = np.array(H_markov)
-				HmarkTHmark += H_markov.T @ H_markov
-				YTHmark += Y.T @ H_markov
+		Y_all = np.array(Y_all)
+		print('\nmax(Y)=',np.max(Y_all))
+		print('mean(Y)=',np.mean(Y_all))
+		print('std(Y)=',np.std(Y_all))
 
-			# RC + RF joint stuff
-			if self.learn_memory and self.learn_markov:
-				HmarkTHmem += H_markov.T @ H
 
-			print("TEACHER FORCING ENDED.")
-			print(np.shape(H))
-			print(np.shape(Y))
-			print(np.shape(HTH))
-			print(np.shape(YTH))
-		else:
-			print("TEACHER FORCING ENDED.")
-			print(np.shape(H))
-			print(np.shape(Y))
-			# print('\nmax(H)=',np.max(H))
-			# print('mean(H)=',np.mean(H))
-			# print('std(H)=',np.std(H))
+		# save things to self
+		self.HTH = HTH
+		self.YTH = YTH
+		self.HmarkTHmark = HmarkTHmark
+		self.YTHmark = YTHmark
+		self.HmarkTHmem = HmarkTHmem
+		self.Y_all = Y_all
+		self.X = X
+		self.Y_true = Y_true
 
-			print('\nmax(x)=',np.max(train_input_sequence))
-			print('mean(x)=',np.mean(train_input_sequence))
-			print('std(x)=',np.std(train_input_sequence))
 
-			print('\nmax(Y)=',np.max(Y))
-			print('mean(Y)=',np.mean(Y))
-			print('std(Y)=',np.std(Y))
+	def doSolving(self):
 
 		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
+
+		HTH = self.HTH
+		YTH = self.YTH
+		HmarkTHmem = self.HmarkTHmem
+		YTHmark = self.YTHmark
+		HmarkTHmark = self.HmarkTHmark
 
 		if self.solver == "pinv":
 			"""
@@ -745,7 +694,7 @@ class esn(object):
 			"""
 			Learns mapping H -> Y with Ridge Regression
 			"""
-			Y = np.array(Y)
+			Y = np.array(self.Y_all)
 			if self.output_dynamics=='simpleRHS':
 				Y = self.scaler.scaleDerivatives(Y)
 				print('\nmax(Y_norm)=',np.max(Y))
@@ -753,49 +702,53 @@ class esn(object):
 				print('std(Y_norm)=',np.std(Y))
 
 			# group Markovian-RFs and reservoir states
-			H = np.array(H)
-			H_markov = np.array(H_markov)
 			if self.learn_markov and self.learn_memory:
 				raise ValueError('Not yet ready to jointly learn both markov and memory terms with ridge regression')
 				# H_all = np.hstack((H,H_markov))
 			elif self.learn_markov:
-				H_all = H_markov
-				alpha = self.regularization_RF
+				ridge = Ridge(alpha=self.regularization_RF, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
+				ridge.fit(self.H_markov, Y)
+				W_out_markov = ridge.coef_
 			elif self.learn_memory:
-				H_all = H
-				alpha = self.regularization_RC
+				ridge = Ridge(alpha=self.regularization_RC, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
+				ridge.fit(self.H_memory, Y)
+				W_out_memory = ridge.coef_
 
-			if self.learn_markov or self.learn_memory:
-				ridge = Ridge(alpha=alpha, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
-				ridge.fit(H_all, Y)
-				W_out = ridge.coef_
-				H_all = np.array(H_all)
+		else:
+			raise ValueError("Undefined solver.")
 
-			if self.learn_markov:
-				W_out_markov = W_out
-			elif self.learn_memory:
-				W_out_memory = W_out
+		print("FINALISING WEIGHTS...")
+		if self.learn_markov:
+			self.W_out_markov = W_out_markov
+			plotMatrix(self, self.W_out_markov, 'W_out_markov')
+		if self.learn_memory:
+			self.W_out_memory = W_out_memory
+			plotMatrix(self, self.W_out_memory, 'W_out_memory')
 
+
+	def makeTrainPlots(self):
+		H_markov = np.array(self.H_markov)
+		H_memory = np.array(self.H_memory)
+
+		if self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
 			if self.learn_memory:
 				## Plot H
-				fontsize = 12
-				# Plotting the contour plot
 				fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
 				axes = [axes]
-				axes[0].set_xlabel(r"Time $t$", fontsize=fontsize)
-				axes[0].set_ylabel(r"State $h$", fontsize=fontsize)
-				n_times, n_hidden = H.shape
+				axes[0].set_xlabel(r"Time $t$", fontsize=12)
+				axes[0].set_ylabel(r"State $h$", fontsize=12)
+				n_times, n_hidden = H_memory.shape
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_TRAIN_raw.png"
 				for n in range(n_hidden):
-					axes[0].plot(np.arange(n_times)*self.dt, H[:,n])
+					axes[0].plot(np.arange(n_times)*self.dt, H_memory[:,n])
 				plt.savefig(fig_path)
 				plt.close()
 
 
 			try:
 				## Plot ridge-regression quality
-				Y = np.array(Y)
-				Y_true = np.array(Y_true)
+				Y = np.array(self.Y_all)
+				Y_true = np.array(self.Y_true)
 				ridge_predict = ridge.predict(H_all)
 				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_TRAIN_true.png"
 				fig, axes = plt.subplots(nrows=1, ncols=1+Y.shape[1],figsize=(5*(1+Y.shape[1]), 6))
@@ -869,8 +822,6 @@ class esn(object):
 			except:
 				print('Unable to plot matt extra stuff')
 
-
-
 		# if self.component_wise:
 		# 	pdb.set_trace()
 		# 	fig_path = self.saving_path + self.fig_dir + self.model_name + "/component_wise_fit.png"
@@ -885,19 +836,59 @@ class esn(object):
 		# 	plt.close()
 
 
+	def train(self):
+		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
+			raise ValueError('Model has already run for this configuration. Exiting with an error.')
+		self.start_time = time.time()
+		dynamics_length = self.dynamics_length
+		input_dim = self.input_dim
+		N_used = self.N_used
 
+		with open(self.train_data_path, "rb") as file:
+			# Pickle the "data" dictionary using the highest protocol available.
+			data = pickle.load(file)
+			train_input_sequence = data["train_input_sequence"]
+			print("Adding noise to the training data. {:} per mille ".format(self.noise_level))
+			train_input_sequence = addNoise(train_input_sequence, self.noise_level)
+			N_all, dim = np.shape(train_input_sequence)
+			if input_dim > dim: raise ValueError("Requested input dimension is wrong.")
+			train_input_sequence = train_input_sequence[:N_used, :input_dim]
+			dt = data["dt"]
+			del data
 
-		else:
-			raise ValueError("Undefined solver.")
+		print("##Using {:}/{:} dimensions and {:}/{:} samples ##".format(input_dim, dim, N_used, N_all))
+		if N_used > N_all: raise ValueError("Not enough samples in the training data.")
+		print("SCALING")
 
-		print("FINALISING WEIGHTS...")
-		if self.learn_markov:
-			self.W_out_markov = W_out_markov
-			plotMatrix(self, self.W_out_markov, 'W_out_markov')
+		train_input_sequence = self.scaler.scaleData(train_input_sequence)
 
-		if self.learn_memory:
-			self.W_out_memory = W_out_memory
-			plotMatrix(self, self.W_out_memory, 'W_out_memory')
+		N, input_dim = np.shape(train_input_sequence)
+
+		# Setting the reservoir variables
+		self.set_random_weights()
+
+		# TRAINING LENGTH
+		tl = N - dynamics_length
+
+		print("TRAINING: Dynamics prerun...")
+		# H_dyn = np.zeros((dynamics_length, self.getAugmentedStateSize(), 1))
+
+		# Initialize reservoir state
+		self.set_h_zeros()
+		h = self.get_h_DL(dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+
+		# Teacher Forcing
+		self.doTeacherForcing(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+
+		# STore something useful for plotting
+		self.first_train_vec = train_input_sequence[(dynamics_length+1),:]
+
+		# solve
+		self.doSolving()
+
+		# plot things
+		self.makeTrainPlots()
+
 
 
 		print("COMPUTING PARAMETERS...")
