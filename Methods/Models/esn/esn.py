@@ -495,6 +495,9 @@ class esn(object):
 
 	def doTeacherForcing(self, train_input_sequence, tl, dynamics_length, h):
 
+		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
+		n_range = tl - matt_offset
+
 		self.H_markov = []
 		self.H_memory = []
 		H_memory = []
@@ -511,31 +514,38 @@ class esn(object):
 		YTHmark = None
 		HmarkTHmem = None
 
-		if self.solver == "pinv":
-			NORMEVERY = 10
-			if self.learn_memory:
-				HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
-				if self.component_wise:
-					YTH = np.zeros((1, self.getAugmentedStateSize()))
-				else:
-					YTH = np.zeros((self.input_dim, self.getAugmentedStateSize()))
-			if self.learn_markov:
-				HmarkTHmark = np.zeros( (self.rf_dim, self.rf_dim))
-				if self.component_wise:
-					YTHmark = np.zeros( (1, self.rf_dim))
-				else:
-					YTHmark = np.zeros( (self.input_dim, self.rf_dim))
-			if self.learn_markov and self.learn_memory:
-				HmarkTHmem = np.zeros( (self.rf_dim, self.getAugmentedStateSize()))
+		# if self.solver == "pinv":
+		NORMEVERY = 10
+		if self.learn_memory:
+			HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
+			if self.component_wise:
+				YTH = np.zeros((1, self.getAugmentedStateSize()))
+				self.H_aug_memory_big = np.zeros( (n_range, self.getAugmentedStateSize(), self.input_dim) )
+				self.H_memory_big = np.zeros( (n_range, self.getAugmentedStateSize(), self.input_dim) )
+			else:
+				YTH = np.zeros((self.input_dim, self.getAugmentedStateSize()))
+				self.H_aug_memory_big = np.zeros( (n_range, self.getAugmentedStateSize()) )
+				self.H_memory_big = np.zeros( (n_range, self.getAugmentedStateSize()) )
+		if self.learn_markov:
+			HmarkTHmark = np.zeros( (self.rf_dim, self.rf_dim))
+			if self.component_wise:
+				YTHmark = np.zeros( (1, self.rf_dim))
+				self.H_markov_big = np.zeros( (n_range, self.rf_dim, self.input_dim) )
+			else:
+				YTHmark = np.zeros( (self.input_dim, self.rf_dim))
+				self.H_markov_big = np.zeros( (n_range, self.rf_dim) )
+		if self.learn_markov and self.learn_memory:
+			HmarkTHmem = np.zeros( (self.rf_dim, self.getAugmentedStateSize()))
 
 
 		print("TRAINING: Teacher forcing...")
 
-		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
-		for t in range(tl - matt_offset):
+		for t in range(n_range):
 			if self.display_output == True:
 				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
 			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
+
+			# MEMORY / RC SECTION
 			if self.learn_memory:
 				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
 					if self.component_wise:
@@ -560,19 +570,27 @@ class esn(object):
 					for k in range(self.input_dim):
 						h_aug = self.augmentHidden(h[:,k,None])
 						H_memory.append(h_aug[:,0])
+						self.H_aug_memory_big[t,:,k] = h_aug[:,0]
+						self.H_memory_big[t,:,k] = h[:,k]
 				else:
 					h_aug = self.augmentHidden(h)
 					H_memory.append(h_aug[:,0])
+					self.H_aug_memory_big[t,:] = h_aug[:,0]
+					self.H_memory_big[t,:] = h[:,0]
+
+			# MARKOV / RF SECTION
 			if self.learn_markov:
 				if self.component_wise:
 					for k in range(self.input_dim):
 						h_markov = np.tanh(self.W_in_markov @ i[k,None] + self.b_h_markov)
 						H_markov.append(h_markov[:,0])
+						self.H_markov_big[t,:,k] = h_markov[:,0]
 				else:
 					h_markov = np.tanh(self.W_in_markov @ i + self.b_h_markov)
 					H_markov.append(h_markov[:,0])
+					self.H_markov_big[t,:] = h_markov[:,0]
 
-			# collect data info
+			# TARGET DATA SECTION
 			if self.output_dynamics=='simpleRHS':
 				# FORWARD DIFFERENCE---infer derivative at time t+dl
 				t0=0
@@ -596,19 +614,22 @@ class esn(object):
 			else:
 				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
 
+			# STORE COLLECTED DATA IN NEW STRUCTURES
 			if self.component_wise:
 				for k in range(self.input_dim):
 					Y.append(target[k,0])
-					X.append(train_input_sequence[t+dynamics_length,k])
 			else:
 				Y.append(target[:,0])
-				X.append(train_input_sequence[t+dynamics_length,:])
 
-			Y_all += Y
+			Y_all.append(target[:,0])
+			X.append(train_input_sequence[t+dynamics_length,:])
+
+
+
 			self.H_markov += H_markov
 			self.H_memory += H_memory
 
-			last_batch = t==(tl - matt_offset - 1)
+			last_batch = t==(n_range - 1)
 			if self.solver == "pinv" and ((t % NORMEVERY == 0) or last_batch):
 				# Batched approach used in the pinv case
 				Y = np.array(Y)
@@ -650,10 +671,26 @@ class esn(object):
 		self.HmarkTHmark = HmarkTHmark
 		self.YTHmark = YTHmark
 		self.HmarkTHmem = HmarkTHmem
-		self.Y_all = Y_all
-		self.X = X
+		self.Y_all = np.array(Y_all)
+		self.X = np.array(X)
 		self.Y_true = Y_true
 
+	def getPrediction(self):
+		pred = np.zeros( (self.X.shape[0], self.input_dim) )
+
+		if self.component_wise:
+			for k in range(self.input_dim):
+				if self.learn_memory:
+					pred[:,k,None] += self.H_aug_memory_big[:,:,k] @ self.W_out_memory.T
+				if self.learn_markov:
+					pred[:,k,None] += self.H_markov_big[:,:,k] @ self.W_out_markov.T
+		else:
+			if self.learn_memory:
+				pred += self.H_aug_memory_big @ self.W_out_memory.T
+			if self.learn_markov:
+				pred += self.H_markov_big @ self.W_out_markov.T
+
+		self.pred = pred
 
 	def doSolving(self):
 
@@ -685,6 +722,7 @@ class esn(object):
 				I = np.identity(np.shape(HmarkTHmark)[1])
 				pinv_ = scipypinv2(HmarkTHmark + self.regularization_RF*I)
 				W_out_markov = YTHmark @ pinv_
+
 			elif self.learn_memory:
 				I = np.identity(np.shape(HTH)[1])
 				pinv_ = scipypinv2(HTH + self.regularization_RC*I)
@@ -730,7 +768,44 @@ class esn(object):
 		H_markov = np.array(self.H_markov)
 		H_memory = np.array(self.H_memory)
 
-		if self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
+		## Plot original hidden dynamics
+		if self.learn_memory:
+			## Plot H
+			fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_TRAIN_raw.png"
+			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+			ax.set_xlabel(r"Time $t$", fontsize=12)
+			ax.set_ylabel(r"State $h$", fontsize=12)
+			n_times = self.H_memory_big.shape[0]
+			n_hidden = self.H_memory_big.shape[1]
+			for n in range(n_hidden):
+				if self.component_wise:
+					for k in range(self.input_dim):
+						ax.plot(np.arange(n_times)*self.dt, self.H_memory_big[:,n,k])
+				else:
+					ax.plot(np.arange(n_times)*self.dt, self.H_memory_big[:,n])
+			plt.savefig(fig_path)
+
+		## Plot the learned markovian function
+		# Treat states as interchangeable:
+		# Plot X_k vs (Y_k prediction, Y_k truth)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_training_fits.png"
+		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+		ax.set_xlabel(r"State $X_k$", fontsize=12)
+		ax.set_ylabel(r"Correction $Y_k$", fontsize=12)
+		X_unlist = np.reshape(self.X, (-1,1))
+		ax.scatter(X_unlist, np.reshape(self.Y_all, (-1,1)), color='gray', s=10, alpha=0.8, label='inferred residuals')
+		ax.scatter(X_unlist, np.reshape(self.pred, (-1,1)), color='red', marker='+', s=3, label='fitted residuals')
+		ax.legend()
+		plt.savefig(fig_path)
+		plt.close()
+
+		if self.solver == "pinv":
+			"""
+			Learns mapping H -> Y with Penrose Pseudo-Inverse
+			"""
+
+
+		elif self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
 			if self.learn_memory:
 				## Plot H
 				fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
@@ -885,6 +960,9 @@ class esn(object):
 
 		# solve
 		self.doSolving()
+
+		# acquire predictions implied by the solve
+		self.getPrediction()
 
 		# plot things
 		self.makeTrainPlots()
