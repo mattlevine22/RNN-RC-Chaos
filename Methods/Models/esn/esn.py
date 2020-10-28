@@ -7,6 +7,7 @@
 #!/usr/bin/env python
 import numpy as np
 import pickle
+from scipy import signal # for periodogram
 from scipy import sparse as sparse
 from scipy.sparse import linalg as splinalg
 from scipy.linalg import pinv2 as scipypinv2
@@ -508,11 +509,11 @@ class esn(object):
 		Y_all = []
 		X = [] # true ground states
 
-		HTH = None
-		YTH = None
-		HmarkTHmark = None
-		YTHmark = None
-		HmarkTHmem = None
+		HTH = 0
+		YTH = 0
+		HmarkTHmark = 0
+		YTHmark = 0
+		HmarkTHmem = 0
 
 		# if self.solver == "pinv":
 		NORMEVERY = 10
@@ -666,11 +667,11 @@ class esn(object):
 
 
 		# save things to self
-		self.HTH = HTH
-		self.YTH = YTH
-		self.HmarkTHmark = HmarkTHmark
-		self.YTHmark = YTHmark
-		self.HmarkTHmem = HmarkTHmem
+		self.HTH = HTH/n_range
+		self.YTH = YTH/n_range
+		self.HmarkTHmark = HmarkTHmark/n_range
+		self.YTHmark = YTHmark/n_range
+		self.HmarkTHmem = HmarkTHmem/n_range
 		self.Y_all = np.array(Y_all)
 		self.X = np.array(X)
 		self.Y_true = Y_true
@@ -696,16 +697,16 @@ class esn(object):
 
 		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
 
-		HTH = self.HTH
-		YTH = self.YTH
-		HmarkTHmem = self.HmarkTHmem
-		YTHmark = self.YTHmark
-		HmarkTHmark = self.HmarkTHmark
-
 		if self.solver == "pinv":
 			"""
 			Learns mapping H -> Y with Penrose Pseudo-Inverse
 			"""
+			HTH = self.HTH
+			YTH = self.YTH
+			HmarkTHmem = self.HmarkTHmem
+			YTHmark = self.YTHmark
+			HmarkTHmark = self.HmarkTHmark
+
 			if self.learn_memory and self.learn_markov:
 				Z = np.hstack( ( np.vstack( (HTH, HmarkTHmem) ), np.vstack( (HmarkTHmem.T, HmarkTHmark) ) ) )
 				regI = np.identity(Z.shape[0])
@@ -742,7 +743,6 @@ class esn(object):
 			# group Markovian-RFs and reservoir states
 			if self.learn_markov and self.learn_memory:
 				raise ValueError('Not yet ready to jointly learn both markov and memory terms with ridge regression')
-				# H_all = np.hstack((H,H_markov))
 			elif self.learn_markov:
 				ridge = Ridge(alpha=self.regularization_RF, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
 				ridge.fit(self.H_markov, Y)
@@ -768,6 +768,9 @@ class esn(object):
 		H_markov = np.array(self.H_markov)
 		H_memory = np.array(self.H_memory)
 
+		n_times = self.X.shape[0]
+		time_vec = np.arange(n_times)*self.dt
+
 		## Plot original hidden dynamics
 		if self.learn_memory:
 			## Plot H
@@ -775,21 +778,20 @@ class esn(object):
 			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
 			ax.set_xlabel(r"Time $t$", fontsize=12)
 			ax.set_ylabel(r"State $h$", fontsize=12)
-			n_times = self.H_memory_big.shape[0]
 			n_hidden = self.H_memory_big.shape[1]
 			for n in range(n_hidden):
 				if self.component_wise:
 					for k in range(self.input_dim):
-						ax.plot(np.arange(n_times)*self.dt, self.H_memory_big[:,n,k])
+						ax.plot(time_vec, self.H_memory_big[:,n,k])
 				else:
-					ax.plot(np.arange(n_times)*self.dt, self.H_memory_big[:,n])
+					ax.plot(time_vec, self.H_memory_big[:,n])
 			plt.savefig(fig_path)
 
 		## Plot the learned markovian function
 		# Treat states as interchangeable:
 		# Plot X_k vs (Y_k prediction, Y_k truth)
 		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_training_fits.png"
-		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
+		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 6))
 		ax.set_xlabel(r"State $X_k$", fontsize=12)
 		ax.set_ylabel(r"Correction $Y_k$", fontsize=12)
 		X_unlist = np.reshape(self.X, (-1,1))
@@ -798,6 +800,76 @@ class esn(object):
 		ax.legend()
 		plt.savefig(fig_path)
 		plt.close()
+
+		# Treat states independently:
+		for k in range(self.input_dim):
+			fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_training_fits_state{k}.png".format(k=k)
+			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 6))
+			ax.set_xlabel(r"State $X_{k}$".format(k=k), fontsize=12)
+			ax.set_ylabel(r"Correction $Y_{k}$".format(k=k), fontsize=12)
+			ax.scatter(self.X[:,k], self.Y_all[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
+			ax.scatter(self.X[:,k], self.pred[:,k], color='red', marker='+', s=3, label='fitted residuals')
+			ax.legend()
+			plt.savefig(fig_path)
+			plt.close()
+
+		# plot over time
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_training_fits.png"
+		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
+		for k in range(self.input_dim):
+			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
+			ax[k].scatter(time_vec, self.Y_all[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
+			ax[k].scatter(time_vec, self.pred[:,k], color='red', marker='+', s=3, label='fitted residuals')
+		ax[-1].legend()
+		plt.savefig(fig_path)
+		plt.close()
+
+		# plot over time
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_training_errors.png"
+		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
+		for k in range(self.input_dim):
+			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
+			ax[k].plot(time_vec, self.Y_all[:,k] - self.pred[:,k], linewidth=2)
+		ax[-1].legend()
+		plt.savefig(fig_path)
+		plt.close()
+
+		# Plot PSD
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSD_errors.png"
+		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
+
+		err_mat = (self.Y_all - self.pred)**2
+		# normalize assuming each component statistically the same
+		err_mat -= np.mean(err_mat) # subtract scalar avg error
+		err_mat /= np.std(err_mat) # divide by scalar SD
+		for k in range(self.input_dim):
+			# errs = self.Y_all[:,k] - self.pred[:,k]
+			f, Pxx_den = signal.periodogram(err_mat[:,k], fs=1/self.dt)
+			# pdb.set_trace()
+			if k==0:
+				Pxx_den_SUM = Pxx_den
+			else:
+				Pxx_den_SUM += Pxx_den
+			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
+			ax[k].semilogx(f, Pxx_den)
+		ax[-1].legend()
+		ax[-1].set_xlabel('frequency [Hz]')
+		fig.suptitle('PSD [V**2/Hz]')
+		plt.savefig(fig_path)
+		plt.close()
+
+		# Plot avg PSD across trajectories
+		Pxx_den_SUM /= self.input_dim
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSDavg_errors.png"
+		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
+		ax.set_ylabel('PSD [V**2/Hz]', fontsize=12)
+		ax.set_xlabel('frequency [Hz]')
+		ax.loglog(f, Pxx_den_SUM)
+		ax.set_ylim([1e-8, 2])
+		ax.set_title('Average PSD of normalized squared error of predicted sequence')
+		plt.savefig(fig_path)
+		plt.close()
+
 
 		if self.solver == "pinv":
 			"""
