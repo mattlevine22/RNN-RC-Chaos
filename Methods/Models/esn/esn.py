@@ -840,8 +840,9 @@ class esn(object):
 
 		err_mat = (self.Y_all - self.pred)**2
 		# normalize assuming each component statistically the same
-		err_mat -= np.mean(err_mat) # subtract scalar avg error
-		err_mat /= np.std(err_mat) # divide by scalar SD
+		err_mat -= np.mean(err_mat,0) # subtract scalar avg error
+		err_mat /= np.std(err_mat,0) # divide by scalar SD
+
 		for k in range(self.input_dim):
 			# errs = self.Y_all[:,k] - self.pred[:,k]
 			f, Pxx_den = signal.periodogram(err_mat[:,k], fs=1/self.dt)
@@ -870,6 +871,40 @@ class esn(object):
 		plt.savefig(fig_path)
 		plt.close()
 
+
+		# Plot CROSS-CORRELATION between true data sequence and prediction error sequence
+		true_mat = (self.Y_all - np.mean(self.Y_all,0)) / np.std(self.Y_all,0)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORR_truth_vs_error.png"
+		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
+		for k in range(self.input_dim):
+			xcorr = matt_xcorr(x=true_mat[:,k], y=err_mat[:,k])
+			n_lags = (xcorr.shape[0]-1) / 2
+			lag_vec = self.dt*np.arange(-n_lags,n_lags+1)
+			ax[k].plot(lag_vec, xcorr, linewidth=2)
+			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
+			ax[k].set_ylim([-1,1])
+			ax[k].axvline(x=0, linewidth=1, linestyle='--', color='black')
+			ax[k].axhline(y=0, linewidth=1, linestyle='--', color='black')
+			if k==0:
+				xcorr_SUM = xcorr
+			else:
+				xcorr_SUM += xcorr
+		fig.suptitle('Cross correlation: Lag of true data correlating to errors')
+		plt.savefig(fig_path)
+		plt.close()
+
+		# Plot avgCROSS-CORRELATION between true data sequence and prediction error sequence
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORRavg_truth_vs_error.png"
+		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
+		xcorr_SUM /= self.input_dim
+		ax.set_ylabel(r"Correlation", fontsize=12)
+		ax.plot(lag_vec, xcorr_SUM, linewidth=2)
+		ax.set_ylim([-1,1])
+		ax.axvline(x=0, linewidth=1, linestyle='--', color='black')
+		ax.axhline(y=0, linewidth=1, linestyle='--', color='black')
+		fig.suptitle('avg Cross correlation: Lag of true data correlating to errors')
+		plt.savefig(fig_path)
+		plt.close()
 
 		if self.solver == "pinv":
 			"""
@@ -1038,8 +1073,6 @@ class esn(object):
 
 		# plot things
 		self.makeTrainPlots()
-
-
 
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
