@@ -10,6 +10,13 @@ import io
 import os
 import pdb
 
+def matt_xcorr(x, y):
+	foo = np.correlate(x, y, mode='full')
+	normalization = np.sqrt(np.dot(x, x) * np.dot(y, y)) # this is the transformation function
+	xcorr = np.true_divide(foo,normalization)
+	return xcorr
+
+
 def getNamesInterestingVars():
 	# THE MODEL SHOULD OUTPUT THE FOLLOWING VARIABLES:
 	var_names = [

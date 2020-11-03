@@ -501,6 +501,7 @@ class esn(object):
 
 		self.H_markov = []
 		self.H_memory = []
+		self.H_memory_big = None
 		H_memory = []
 		H_markov = []
 		Y = []
@@ -764,87 +765,86 @@ class esn(object):
 			plotMatrix(self, self.W_out_memory, 'W_out_memory')
 
 
-	def makeTrainPlots(self):
-		H_markov = np.array(self.H_markov)
-		H_memory = np.array(self.H_memory)
-
-		n_times = self.X.shape[0]
+	def makeNewPlots(self, true_state, true_residual, predicted_residual, H_memory_big=None, set_name=''):
+		n_times = true_state.shape[0] # self.X
 		time_vec = np.arange(n_times)*self.dt
+		# true_residual: self.Y_all
 
 		## Plot original hidden dynamics
-		if self.learn_memory:
+		if self.learn_memory and H_memory_big is not None:
 			## Plot H
-			fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_TRAIN_raw.png"
+			fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_raw_{}.png".format(set_name)
 			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
 			ax.set_xlabel(r"Time $t$", fontsize=12)
 			ax.set_ylabel(r"State $h$", fontsize=12)
-			n_hidden = self.H_memory_big.shape[1]
+			n_hidden = H_memory_big.shape[1]
 			for n in range(n_hidden):
 				if self.component_wise:
 					for k in range(self.input_dim):
-						ax.plot(time_vec, self.H_memory_big[:,n,k])
+						ax.plot(time_vec, H_memory_big[:,n,k])
 				else:
-					ax.plot(time_vec, self.H_memory_big[:,n])
+					ax.plot(time_vec, H_memory_big[:,n])
 			plt.savefig(fig_path)
 
 		## Plot the learned markovian function
 		# Treat states as interchangeable:
 		# Plot X_k vs (Y_k prediction, Y_k truth)
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_training_fits.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_fits_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 6))
 		ax.set_xlabel(r"State $X_k$", fontsize=12)
 		ax.set_ylabel(r"Correction $Y_k$", fontsize=12)
-		X_unlist = np.reshape(self.X, (-1,1))
-		ax.scatter(X_unlist, np.reshape(self.Y_all, (-1,1)), color='gray', s=10, alpha=0.8, label='inferred residuals')
-		ax.scatter(X_unlist, np.reshape(self.pred, (-1,1)), color='red', marker='+', s=3, label='fitted residuals')
+		X_unlist = np.reshape(true_state, (-1,1))
+		ax.scatter(X_unlist, np.reshape(true_residual, (-1,1)), color='gray', s=10, alpha=0.8, label='inferred residuals')
+		ax.scatter(X_unlist, np.reshape(predicted_residual, (-1,1)), color='red', marker='+', s=3, label='fitted residuals')
 		ax.legend()
 		plt.savefig(fig_path)
 		plt.close()
 
 		# Treat states independently:
 		for k in range(self.input_dim):
-			fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_training_fits_state{k}.png".format(k=k)
+			fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_fits_{set_name}_state{k}.png".format(set_name=set_name,k=k)
 			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 6))
 			ax.set_xlabel(r"State $X_{k}$".format(k=k), fontsize=12)
 			ax.set_ylabel(r"Correction $Y_{k}$".format(k=k), fontsize=12)
-			ax.scatter(self.X[:,k], self.Y_all[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
-			ax.scatter(self.X[:,k], self.pred[:,k], color='red', marker='+', s=3, label='fitted residuals')
+			ax.scatter(true_state[:,k], true_residual[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
+			ax.scatter(true_state[:,k], predicted_residual[:,k], color='red', marker='+', s=3, label='fitted residuals')
+			ax.scatter(true_state[0,k], predicted_residual[0,k], color='red', marker='x', s=100, label='START fit')
 			ax.legend()
 			plt.savefig(fig_path)
 			plt.close()
 
 		# plot over time
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_training_fits.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_fits_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
-			ax[k].scatter(time_vec, self.Y_all[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
-			ax[k].scatter(time_vec, self.pred[:,k], color='red', marker='+', s=3, label='fitted residuals')
+			ax[k].scatter(time_vec, true_residual[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
+			ax[k].scatter(time_vec, predicted_residual[:,k], color='red', marker='+', s=3, label='fitted residuals')
 		ax[-1].legend()
 		plt.savefig(fig_path)
 		plt.close()
 
 		# plot over time
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_training_errors.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_errors_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
-			ax[k].plot(time_vec, self.Y_all[:,k] - self.pred[:,k], linewidth=2)
+			ax[k].plot(time_vec, true_residual[:,k] - predicted_residual[:,k], linewidth=2)
 		ax[-1].legend()
 		plt.savefig(fig_path)
 		plt.close()
 
 		# Plot PSD
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSD_errors.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSD_errors_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 
-		err_mat = (self.Y_all - self.pred)**2
+		err_mat = (true_residual - predicted_residual)**2
 		# normalize assuming each component statistically the same
 		err_mat -= np.mean(err_mat,0) # subtract scalar avg error
 		err_mat /= np.std(err_mat,0) # divide by scalar SD
 
 		for k in range(self.input_dim):
-			# errs = self.Y_all[:,k] - self.pred[:,k]
+			# errs = true_residual[:,k] - predicted_residual[:,k]
 			f, Pxx_den = signal.periodogram(err_mat[:,k], fs=1/self.dt)
 			# pdb.set_trace()
 			if k==0:
@@ -861,7 +861,7 @@ class esn(object):
 
 		# Plot avg PSD across trajectories
 		Pxx_den_SUM /= self.input_dim
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSDavg_errors.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSDavg_errors_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
 		ax.set_ylabel('PSD [V**2/Hz]', fontsize=12)
 		ax.set_xlabel('frequency [Hz]')
@@ -873,8 +873,8 @@ class esn(object):
 
 
 		# Plot CROSS-CORRELATION between true data sequence and prediction error sequence
-		true_mat = (self.Y_all - np.mean(self.Y_all,0)) / np.std(self.Y_all,0)
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORR_truth_vs_error.png"
+		true_mat = (true_state - np.mean(true_state,0)) / np.std(true_state,0)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORR_truth_vs_error_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			xcorr = matt_xcorr(x=true_mat[:,k], y=err_mat[:,k])
@@ -894,7 +894,7 @@ class esn(object):
 		plt.close()
 
 		# Plot avgCROSS-CORRELATION between true data sequence and prediction error sequence
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORRavg_truth_vs_error.png"
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORRavg_truth_vs_error_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
 		xcorr_SUM /= self.input_dim
 		ax.set_ylabel(r"Correlation", fontsize=12)
@@ -905,118 +905,6 @@ class esn(object):
 		fig.suptitle('avg Cross correlation: Lag of true data correlating to errors')
 		plt.savefig(fig_path)
 		plt.close()
-
-		if self.solver == "pinv":
-			"""
-			Learns mapping H -> Y with Penrose Pseudo-Inverse
-			"""
-
-
-		elif self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
-			if self.learn_memory:
-				## Plot H
-				fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
-				axes = [axes]
-				axes[0].set_xlabel(r"Time $t$", fontsize=12)
-				axes[0].set_ylabel(r"State $h$", fontsize=12)
-				n_times, n_hidden = H_memory.shape
-				fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_TRAIN_raw.png"
-				for n in range(n_hidden):
-					axes[0].plot(np.arange(n_times)*self.dt, H_memory[:,n])
-				plt.savefig(fig_path)
-				plt.close()
-
-
-			try:
-				## Plot ridge-regression quality
-				Y = np.array(self.Y_all)
-				Y_true = np.array(self.Y_true)
-				ridge_predict = ridge.predict(H_all)
-				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_fit_TRAIN_true.png"
-				fig, axes = plt.subplots(nrows=1, ncols=1+Y.shape[1],figsize=(5*(1+Y.shape[1]), 6))
-				for ax_ind in range(Y.shape[1]):
-					axes[ax_ind].plot(Y[:,ax_ind], 'o', color='green', label='data')
-					axes[ax_ind].plot(ridge_predict[:,ax_ind], '+', color='magenta', label='Ridge Predictions')
-					axes[ax_ind].legend(loc="lower right")
-				if self.output_dynamics=='simpleRHS':
-					prediction = self.scaler.descaleDerivatives(ridge_predict)
-					target = self.scaler.descaleDerivatives(Y)
-					std = self.scaler.derivative_std
-				else:
-					prediction = self.scaler.descaleData(ridge_predict)
-					target = self.scaler.descaleData(Y)
-					std = self.scaler.data_std
-				rmse, rmnse, num_accurate_pred_005, num_accurate_pred_050, abserror = computeErrors(target, prediction, std)
-				axes[-1].plot(rmnse)
-				axes[-1].set_title('Training Error Sequence')
-				plt.savefig(fig_path)
-				plt.close()
-
-				# Plot quality of forward-difference
-				try:
-					if self.output_dynamics=='simpleRHS':
-						fig_path = self.saving_path + self.fig_dir + self.model_name + "/forward_difference_eval.png"
-						fig, axes = plt.subplots(nrows=1, ncols=2,figsize=(12, 6))
-						if self.output_dynamics=='simpleRHS':
-							Y_descaled = self.scaler.descaleDerivatives(Y)
-							Y_true_descaled = self.scaler.descaleDerivatives(Y_true)
-						else:
-							Y_descaled = self.scaler.descaleData(Y)
-							Y_true_descaled = self.scaler.descaleData(Y_true)
-						axes[0].plot(np.linalg.norm(Y_descaled - Y_true_descaled, axis=1))
-						axes[0].set_title('MSE sequence')
-						axes[1].plot(np.sum(Y_descaled - Y_true_descaled, axis=1))
-						axes[1].set_title('Absolute Error sequence')
-						fig.suptitle('Forward-Difference Evaluation')
-						plt.savefig(fig_path)
-						plt.close()
-				except:
-					# fails when RDIM is not full state space
-					pass
-
-				## Plot fitted trajectories from ridge fit
-				n_times, n_states = Y.shape
-				if self.output_dynamics in ["simpleRHS", "andrewRHS"]:
-					ridge_predict_traj = np.zeros((n_times, n_states))
-					out = train_input_sequence[dynamics_length]
-					for t in range(n_times):
-						if self.output_dynamics=="simpleRHS":
-							out += self.dt * self.scaler.descaleDerivatives((W_out @ H_all[t,:]).T).T
-						elif self.output_dynamics=="andrewRHS":
-							out = out - self.lam * self.dt * ( out - W_out @ H_all[t,:] )
-						ridge_predict_traj[t,:] = out
-				else:
-					ridge_predict_traj = ridge_predict
-
-				true_traj = train_input_sequence[(dynamics_length+1):]
-
-				print('First true traj:', true_traj[0,:])
-				self.first_train_vec = true_traj[0,:]
-				fig_path = self.saving_path + self.fig_dir + self.model_name + "/ridge_trajectories_TRAIN_true.png"
-				fig, axes = plt.subplots(nrows=n_states, ncols=1,figsize=(12, 12), squeeze=False)
-				for n in range(n_states):
-					axes[n,0].plot(true_traj[:n_times,n], 'o', label='data')
-					axes[n,0].plot(ridge_predict_traj[:n_times,n], '+', label='Ridge Predictions')
-					axes[n,0].legend(loc="lower right")
-				fig.suptitle('Training Trajectories Sequence')
-				plt.savefig(fig_path)
-				plt.close()
-			except:
-				print('Unable to plot matt extra stuff')
-
-		# if self.component_wise:
-		# 	pdb.set_trace()
-		# 	fig_path = self.saving_path + self.fig_dir + self.model_name + "/component_wise_fit.png"
-		# 	fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 8))
-		# 	X = np.array(X)
-		# 	Y = np.array(Y)
-		# 	ax.scatter(X, Y, color='gray', label='data')
-		# 	if self.learn_markov:
-		# 		ax.plot(W_out_markov @ H_markov, Y, color='blue', label='RF')
-		# 	ax.legend()
-		# 	plt.savefig(fig_path)
-		# 	plt.close()
-
 
 	def train(self):
 		if self.dont_redo and os.path.exists(self.saving_path + self.model_dir + self.model_name + "/data.pickle"):
@@ -1072,8 +960,9 @@ class esn(object):
 		self.getPrediction()
 
 		# plot things
-		self.makeTrainPlots()
+		self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAIN')
 
+		raise ValueError('Stop now')
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
 		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out_memory) + np.size(self.W_out_markov) + np.size(self.W_in_markov) + np.size(self.b_h_markov)
@@ -1373,6 +1262,9 @@ class esn(object):
 			if num_test_ICS==1 and set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec) and self.noise_level==0:
 				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
+			# plot more things
+			self.makeNewPlots(true_state=target, true_residual=target, predicted_residual=prediction, set_name=set_name)
+
 
 		predictions_all = np.array(predictions_all)
 		hidden_all = np.array(hidden_all)
