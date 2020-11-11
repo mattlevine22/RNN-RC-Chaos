@@ -785,6 +785,7 @@ class esn(object):
 				else:
 					ax.plot(time_vec, H_memory_big[:,n])
 			plt.savefig(fig_path)
+			plt.close()
 
 		## Plot the learned markovian function
 		# Treat states as interchangeable:
@@ -813,6 +814,8 @@ class esn(object):
 			plt.savefig(fig_path)
 			plt.close()
 
+		mse = np.mean( (true_residual - predicted_residual)**2)
+
 		# plot over time
 		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_fits_{}.png".format(set_name)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
@@ -821,6 +824,7 @@ class esn(object):
 			ax[k].scatter(time_vec, true_residual[:,k], color='gray', s=10, alpha=0.8, label='inferred residuals')
 			ax[k].scatter(time_vec, predicted_residual[:,k], color='red', marker='+', s=3, label='fitted residuals')
 		ax[-1].legend()
+		plt.suptitle('Timewise fits with total MSE {mse:.5}'.format(mse=mse))
 		plt.savefig(fig_path)
 		plt.close()
 
@@ -831,6 +835,7 @@ class esn(object):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
 			ax[k].plot(time_vec, true_residual[:,k] - predicted_residual[:,k], linewidth=2)
 		ax[-1].legend()
+		plt.suptitle('Timewise errors with total MSE {mse:.5}'.format(mse=mse))
 		plt.savefig(fig_path)
 		plt.close()
 
@@ -960,7 +965,9 @@ class esn(object):
 		self.getPrediction()
 
 		# plot things
-		self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAIN')
+		self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAINORIGINAL')
+
+		# raise ValueError('shortcut stoppage!')
 
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
