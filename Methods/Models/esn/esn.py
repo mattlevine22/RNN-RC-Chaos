@@ -962,7 +962,6 @@ class esn(object):
 		# plot things
 		self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAIN')
 
-		raise ValueError('Stop now')
 		print("COMPUTING PARAMETERS...")
 		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
 		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out_memory) + np.size(self.W_out_markov) + np.size(self.W_in_markov) + np.size(self.b_h_markov)

@@ -27,8 +27,12 @@ class Physics(object):
 	    dudt[2] = u0[0] * u0[1] - beta*u0[2]
 	    return dudt
 
-	def lds(self, t0, u0, eps=0.1, A=np.array([[0, 5],[-5,0]])):
+	def lds_old(self, t0, u0, eps=0.1, A=np.array([[0, 5],[-5,0]])):
 	    dudt = eps*A @ u0
+	    return dudt
+
+	def lds(self, t0, u0, A=np.array([[0, 1],[-1,0]])):
+	    dudt = A @ u0
 	    return dudt
 
 	def l96slow(self, t0, u0):
