@@ -20,6 +20,128 @@ import pdb
 #     ('xk_star', float64[:])               # a simple scalar field
 # ]
 
+class LDS_COUPLED:
+  """
+  A simple class that implements a coupled linear dynamical system
+
+  The class computes RHS's to make use of scipy's ODE solvers.
+
+  Parameters:
+    A
+
+  """
+
+  def __init__(_s,
+      A = np.array([[0, 1], [-1, 0]]),
+      eps = 0.05,
+      h = 0.1,
+      share_gp=True,
+      add_closure=False):
+    '''
+    Initialize an instance: setting parameters and xkstar
+    '''
+    _s.share_gp = share_gp
+    _s.A = A
+    _s.hx = h # just useful when re-using L96 code
+    _s.eps = eps
+    _s.K = _s.A.shape[0] # slow state dims
+    _s.J = _s.A.shape[0] # fast state dims
+    _s.slow_only = False
+    _s.exchangeable_states = False
+    _s.add_closure = add_closure
+
+  def get_inits(_s):
+    state_inits = np.random.uniform(low=-1, high=1, size=_s.K+_s.J)
+    # normalize inits so that slow and fast system both start on unit circle
+    state_inits[:_s.K] /= np.sqrt(np.sum(state_inits[:_s.K]**2))
+    state_inits[_s.K:] /= np.sqrt(np.sum(state_inits[_s.K:]**2))
+    return state_inits
+
+  def get_state_names(_s):
+    return ['X_'+ str(k+1) for k in range(_s.K)]
+
+  def plot_state_indices(_s):
+    return [0, _s.K]
+
+  def slow(_s, x, t):
+    ''' Full system RHS '''
+    foo_rhs = _s.A @ x
+    return foo_rhs
+
+  def full(_s, z, t):
+    ''' Full system RHS '''
+    x = z[:_s.K]
+    y = z[_s.K:]
+    foo_rhs = np.empty(_s.K + _s.J)
+    foo_rhs[:_s.K] = _s.A @ x + _s.hx*y
+    foo_rhs[_s.K:] = _s.A @ y / _s.eps
+    return foo_rhs
+
+  def rhs(_s, z, t):
+    if _s.slow_only:
+        foo_rhs = _s.slow(z, t)
+    else:
+        foo_rhs = _s.full(z, t)
+    if _s.add_closure:
+        foo_rhs += _s.simulate(z)
+    return foo_rhs
+
+
+  def regressed(_s, x, t):
+    ''' Only slow variables with RHS learned from data '''
+    rhs = _s.rhs(x,t)
+    # add data-learned coupling term
+    rhs += _s.simulate(x)
+    return rhs
+
+  def set_stencil(_s, left = 0, right = 0):
+    _s.stencil = np.arange(left, 1 + right)
+
+  def single_step_implied_Ybar(_s, Xnow, Xnext, delta_t):
+    # use an euler scheme to back-out the implied avg Ybar_t from X_t and X_t+1
+    Ybar = (Xnext - Xnow)/delta_t - _s.rhs(S=Xnow, t=None)
+
+    return Ybar
+
+  def implied_Ybar(_s, X_in, X_out, delta_t):
+    # the idea is that X_in are true data coming from a test/training set
+    # Xout(k) is the 1-step-ahed prediction associated to Xin(k).
+    # In other words Xout(k) = Psi-ML(Xin(k))
+    T = X_in.shape[0]
+    Ybar = np.zeros( (T, _s.K) )
+    for t in range(T):
+      Ybar[t,:] = _s.single_step_implied_Ybar(Xnow=X_in[t,:], Xnext=X_out[t,:], delta_t=delta_t)
+    return Ybar
+
+  def get_state_limits(_s):
+    lims = (None,None)
+    return lims
+
+  def set_predictor(_s, predictor):
+    _s.predictor = predictor
+
+  # def set_G0_predictor(_s):
+  #   _s.predictor = lambda x: _s.hy * x
+
+  def set_null_predictor(_s):
+    _s.predictor = lambda x: 0
+
+  def simulate(_s, slow):
+    if _s.share_gp:
+      return np.reshape(_s.predictor(_s.apply_stencil(slow)), (-1,))
+    else:
+      return np.reshape(_s.predictor(slow.reshape(1,-1)), (-1,))
+
+  def apply_stencil(_s, slow):
+    # behold: the blackest of all black magic!
+    # (in a year, I will not understand what this does)
+    # the idea: shift xk's so that each row corresponds to the stencil:
+    # (x_{k-1}, x_{k}, x_{k+1}), for example,
+    # based on '_s.stencil' and 'slow' array (which is (x1,...,xK) )
+    return slow[np.add.outer(np.arange(_s.K), _s.stencil) % _s.K]
+
+
+
 class LDS:
   """
   A simple class that implements a linear dynamical system
