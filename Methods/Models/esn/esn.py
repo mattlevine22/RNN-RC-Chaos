@@ -12,6 +12,7 @@ from scipy import sparse as sparse
 from scipy.sparse import linalg as splinalg
 from scipy.linalg import pinv2 as scipypinv2
 from scipy.integrate import solve_ivp, ode
+from scipy.interpolate import CubicSpline
 # from scipy.linalg import lstsq as scipylstsq
 # from numpy.linalg import lstsq as numpylstsq
 from utils import *
@@ -494,6 +495,222 @@ class esn(object):
 		print("\n")
 		return h
 
+	def x_t(self, t, t0=0):
+		#linearly interpolate self.x_vec at time t
+		ind_mid = (t-t0) / self.dt
+		ind_low = max(0, min( int(np.floor(ind_mid)), self.x_vec.shape[0]-1) )
+		ind_high = min(self.x_vec.shape[0]-1, int(np.ceil(ind_mid)))
+		v0 = self.x_vec[ind_low,:]
+		v1 = self.x_vec[ind_high,:]
+		tmid = ind_mid - ind_low
+
+		return (1 - tmid) * v0 + tmid * v1
+
+	def xdot_t(self, t, t0=0, N=10):
+		'''differentiate self.x_vec at time t'''
+		# Note N should be EVEN (wasteful to check/fix here)
+
+		# initialize output
+		xdot = np.zeros(self.input_dim)
+
+		# find location of t in self.x_vec
+		ind_mid = (t-t0) / self.dt
+
+		# pick a narrow window of N points around time t
+		ind_low = max(int(np.floor(ind_mid - N/2)), 0)
+		ind_high = min(int(np.ceil(ind_mid + N/2)), self.x_vec.shape[0])
+		f_win = self.x_vec[ind_low:ind_high,:]
+		t_win = t0 + self.dt*np.arange(ind_low, ind_high)
+
+		# compute kth component of derivative
+		for k in range(self.input_dim):
+			# compute cubic spline interpolant of kth component
+			yk = f_win[:,k]
+			fk = CubicSpline(x=t_win, y=yk)
+
+			# differentiate the interpolant
+			dfk = fk.derivative()
+
+			# evaluate the derivative at time t
+			xdot[k] = dfk(t)
+
+		return xdot
+
+	def mdag(self, t, x, xdot):
+		if self.use_f0:
+			m = xdot - self.f0(t0=t, u0=x)
+		else:
+			m = xdot
+		return m
+
+	def q_t(self, x_t):
+		q = np.tanh(self.W_in_markov @ x_t + self.b_h_markov)
+		return q
+
+	def rcrf_rhs(self, t, S):
+		x = self.x_t(t=t)
+		xdot = self.xdot_t(t=t)
+		m = self.mdag(t, x, xdot)
+
+		if self.learn_memory:
+			r = S[:self.reservoir_size]
+			r_aug = self.augmentHidden(r)
+			dr = np.tanh( self.W_h_effective @ r + self.W_in @ x + np.squeeze(self.b_h) )
+			dZrr = np.outer(r_aug, r_aug).reshape(-1)
+			dYr = np.outer(r_aug, m).reshape(-1)
+		if self.learn_markov:
+			q = self.q_t(x)
+			dZqq = np.outer(q, q).reshape(-1)
+			dYq = np.outer(q, m).reshape(-1)
+
+		if self.learn_memory and self.learn_markov:
+			dZrq = np.outer(r_aug, q).reshape(-1)
+			S = np.hstack( (dr, dZrr, dZrq, dZqq, dYq, dYr) )
+		elif self.learn_memory:
+			S = np.hstack( (dr, dZrr, dYr) )
+		elif self.learn_markov:
+			S = np.hstack( (dZqq, dYq) )
+		return S
+
+	def newMethod_getIC(self, T_warmup, T_train):
+		# generate ICs for training integration
+		if self.learn_memory:
+			# warm up reservoir state if learning memory
+			r0 = np.zeros(self.reservoir_size)
+			r_aug0 = self.augmentHidden(r0)
+			x0 = self.x_t(t=0)
+			xdot0 = self.xdot_t(t=0)
+			m0 = self.mdag(t=0, x=x0, xdot=xdot0)
+			Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
+			Yr0 = np.outer(r_aug0, m0).reshape(-1)
+			if self.learn_markov:
+				q0 = self.q_t(x0)
+				Zqq0 = np.outer(q0, q0).reshape(-1)
+				Yq0 = np.outer(q0, m0).reshape(-1)
+				Zrq0 = np.outer(r_aug0, q0).reshape(-1)
+				y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
+			else:
+				y0 = np.hstack( (r0, Zrr0, Yr0) )
+
+			t_span = [0, T_warmup]
+			t_eval = np.array([T_warmup])
+			sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+			y0 = np.squeeze(sol.y)
+		elif self.learn_markov:
+			x0 = self.x_t(t=T_warmup)
+			xdot0 = self.xdot_t(t=T_warmup)
+			m0 = self.mdag(t=T_warmup, x=x0, xdot=xdot0)
+			q0 = self.q_t(x0)
+			Zqq0 = np.outer(q0, q0).reshape(-1)
+			Yq0 = np.outer(q0, m0).reshape(-1)
+			y0 = np.hstack( (Zqq0, Yq0) )
+		else:
+			y0 = None
+
+		return y0
+
+	def newMethod_saveYZ(self, yend, T_train):
+		if self.learn_memory and self.learn_markov:
+			# y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
+			r = yend[:self.reservoir_size]
+
+			# Zrr
+			i_start = self.reservoir_size
+			i_end = i_start + self.reservoir_size**2
+			Zrr = yend[i_start:i_end]
+
+			#Zrq
+			i_start = i_end
+			i_end = i_start + self.reservoir_size*self.rf_dim
+			Zrq = yend[i_start:i_end]
+
+			#Zqq
+			i_start = i_end
+			i_end = i_start + self.rf_dim**2
+			Zqq = yend[i_start:i_end]
+
+			#Yq
+			i_start = i_end
+			i_end = i_start + self.rf_dim**self.input_dim
+			Yq = yend[i_start:i_end]
+
+			#Yr
+			Yr = yend[i_end:]
+
+			Y = np.hstack( (Yr, Yq) )
+			Z = np.hstack( ( np.vstack( (Zrr, Zrq) ), np.vstack( (Zrq.T, Zqq) ) ) )
+		elif self.learn_markov:
+			# y0 = np.hstack( (Zqq0, Yq0) )
+			Zqq = yend[:self.rf_dim**2].reshape(self.rf_dim, self.rf_dim)
+			Yq = yend[self.rf_dim**2:].reshape(self.rf_dim, self.input_dim)
+		elif self.learn_memory:
+			# y0 = np.hstack( (r0, Zrr0, Yr0) )
+			r = yend[:self.reservoir_size]
+			i_start = self.reservoir_size
+			i_end = i_start + self.reservoir_size**2
+			Zrr = yend[i_start:i_end].reshape(self.reservoir_size, self.reservoir_size)
+			Yr = yend[i_end:].reshape(self.reservoir_size, self.input_dim)
+
+		# Concatenate solutions into big matrices Y, Z
+		if self.learn_memory and self.learn_markov:
+			Y = np.hstack( (Yr, Yq) )
+			Z = np.hstack( ( np.vstack( (Zrr, Zrq) ), np.vstack( (Zrq.T, Zqq) ) ) )
+		elif self.learn_markov:
+			Y = Yq
+			Z = Zqq
+		elif self.learn_memory:
+			Y = Yr
+			Z = Zrr
+
+		# save Time-Normalized Y,Z
+		self.Y = Y / T_train
+		self.Z = Z / T_train
+
+
+	def newMethod(self, h, tl, dynamics_length, train_input_sequence):
+
+		self.x_vec = train_input_sequence
+		T_warmup = self.dt*dynamics_length
+		T_train = self.dt*tl
+
+		y0 = self.newMethod_getIC(T_warmup=T_warmup, T_train=T_train)
+
+		# Perform training integration using IC y0
+		t_span = [T_warmup, T_warmup + T_train]
+		# t_eval = np.array([T_warmup + T_train])
+		# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+		sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, max_step=self.dt/2)
+
+		# plot the integration
+		if self.learn_memory:
+			newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL', dt=self.dt)
+			self.r_aug = self.augmentHidden(sol.y[:self.reservoir_size,:].T)
+		# allocate, reshape, normalize, and save solutions
+		self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
+
+
+	def doNewSolving(self):
+		regI = np.identity(self.Z.shape[0])
+		if self.learn_memory and self.learn_markov:
+			regI[:self.reservoir_size,:self.reservoir_size] *= self.regularization_RC
+			regI[self.reservoir_size:,self.reservoir_size:] *= self.regularization_RF
+		elif self.learn_markov:
+			regI *= self.regularization_RF
+		elif self.learn_memory:
+			regI *= self.regularization_RC
+
+		pinv_ = scipypinv2(self.Z + regI)
+		W_out_all = self.Y.T @ pinv_
+		if self.learn_memory and self.learn_markov:
+			self.W_out_memory = W_out_all[:,:self.reservoir_size]
+			self.W_out_markov = W_out_all[:,self.reservoir_size:]
+		elif self.learn_markov:
+			self.W_out_markov = W_out_all
+		elif self.learn_memory:
+			self.W_out_memory = W_out_all
+
+		return
+
 	def doTeacherForcing(self, train_input_sequence, tl, dynamics_length, h):
 
 		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
@@ -952,20 +1169,28 @@ class esn(object):
 		self.set_h_zeros()
 		h = self.get_h_DL(dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
 
+		# alternative method for training!!!
+		self.newMethod(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+
+		# alternative method for solving!!!
+		self.doNewSolving()
+
+		# pdb.set_trace()
+
 		# Teacher Forcing
-		self.doTeacherForcing(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+		# self.doTeacherForcing(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
 
 		# STore something useful for plotting
 		self.first_train_vec = train_input_sequence[(dynamics_length+1),:]
 
 		# solve
-		self.doSolving()
+		# self.doSolving()
 
 		# acquire predictions implied by the solve
-		self.getPrediction()
+		# self.getPrediction()
 
 		# plot things
-		self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAINORIGINAL')
+		# self.makeNewPlots(true_state=self.X, true_residual=self.Y_all, predicted_residual=self.pred, H_memory_big=self.H_memory_big, set_name='TRAINORIGINAL')
 
 		# raise ValueError('shortcut stoppage!')
 

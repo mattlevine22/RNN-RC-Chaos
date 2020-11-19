@@ -273,3 +273,12 @@ def plotHyperparamContour(df, fig_path, xkey=None, ykey=None, zkey=None):
     plt.colorbar(sc)
     plt.savefig(fig_path)
     plt.close()
+
+def newMethod_plotting(model, hidden, set_name, dt):
+    fig, ax = plt.subplots()
+    fig_path = model.saving_path + model.fig_dir + model.model_name + "/newMethod_hidden{:}.png".format(set_name)
+    n_times, n_hidden = hidden.shape
+    for n in range(n_hidden):
+        ax.plot(np.arange(n_times)*dt, hidden[:,n])
+    plt.savefig(fig_path)
+    plt.close()
