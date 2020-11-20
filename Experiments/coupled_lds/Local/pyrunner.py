@@ -14,14 +14,14 @@ parser.add_argument('--system_name', type=str, default='coupled_lds_less_memory'
 parser.add_argument('--f0_name', type=str, default='lds')
 parser.add_argument('--regularization_RF', type=float, default=0)
 parser.add_argument('--regularization_RC', type=float, default=0)
-parser.add_argument('--approx_reservoir_size', type=int, default=2000)
+parser.add_argument('--approx_reservoir_size', type=int, default=200)
+parser.add_argument('--rf_dim', type=int, default=200)
 
 FLAGS = parser.parse_args()
 
 BASE_STR = '''python3 RUN.py esn \
   --dont_redo 0 \
   --gamma 1 \
-  --rf_dim 300 \
   --solver pinv \
   --hidden_dynamics ARNN \
   --output_dynamics simpleRHS \

@@ -10,6 +10,7 @@ from Config.global_conf import global_params
 sys.path.insert(0, global_params.global_utils_path)
 from plotting_utils import *
 from global_utils import *
+from line_profiler import LineProfiler
 
 import argparse
 
@@ -43,7 +44,21 @@ def runModel(params_dict):
 
 def trainModel(params_dict):
 	model = getModel(params_dict)
-	model.train()
+	profile = False
+	if profile:
+		lp = LineProfiler()
+		lp.add_function(model.newMethod)
+		lp.add_function(model.newMethod_getIC)
+		lp.add_function(model.newMethod_saveYZ)
+		lp.add_function(model.rcrf_rhs)
+		lp.add_function(model.xdot_t)
+		lp.add_function(model.x_t)
+		lp_wrapper = lp(model.train)
+		lp_wrapper()
+		lp.print_stats()
+	else:
+		model.train()
+
 	model.delete()
 	del model
 	return 0
@@ -99,8 +114,8 @@ def main():
 	args_dict["test_data_path"] = global_params.testing_data_path.format(args.system_name, args.N)
 	args_dict["worker_id"] = 0
 
-	print('Running', args_dict["saving_path"])
 	runModel(args_dict)
+
 
 if __name__ == '__main__':
 	main()

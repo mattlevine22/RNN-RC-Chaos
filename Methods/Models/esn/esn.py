@@ -110,13 +110,14 @@ class esn(object):
 			self.f0 = 0
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
-		print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
+		# print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
 
 		os.makedirs(self.saving_path + self.model_dir + self.model_name, exist_ok=True)
 		os.makedirs(self.saving_path + self.fig_dir + self.model_name, exist_ok=True)
 		os.makedirs(self.saving_path + self.results_dir + self.model_name, exist_ok=True)
 		os.makedirs(self.saving_path + self.logfile_dir + self.model_name, exist_ok=True)
 
+		print('FIGURE PATH:', self.saving_path + self.results_dir + self.model_name)
 	# def solve(self, r0, x0, solver='Euler'):
 
 	def predict_next(self, x_input, h_reservoir):
@@ -354,14 +355,14 @@ class esn(object):
 	def getSparseWeights(self, sizex, sizey, radius, sparsity, worker_id=1):
 		# W = np.zeros((sizex, sizey))
 		# Sparse matrix with elements between 0 and 1
-		print("WEIGHT INIT")
+		# print("WEIGHT INIT")
 		W = sparse.random(sizex, sizey, density=sparsity, random_state=worker_id)
 		# W = sparse.random(sizex, sizey, density=sparsity, random_state=worker_id, data_rvs=np.random.randn)
 		# Sparse matrix with elements between -1 and 1
 		# W.data *=2
 		# W.data -=1
 		# to print the values do W.A
-		print("EIGENVALUE DECOMPOSITION")
+		# print("EIGENVALUE DECOMPOSITION")
 		eigenvalues, eigvectors = splinalg.eigs(W)
 		eigenvalues = np.abs(eigenvalues)
 		W = (W/np.max(eigenvalues))*radius
@@ -424,7 +425,7 @@ class esn(object):
 
 		# initialize Reservoir random terms for RC
 		if self.learn_memory:
-			print("Initializing the reservoir weights...")
+			# print("Initializing the reservoir weights...")
 			if self.component_wise:
 				self.reservoir_size = self.approx_reservoir_size
 			else:
@@ -432,11 +433,11 @@ class esn(object):
 				self.reservoir_size = int(self.input_dim*nodes_per_input)
 			self.sparsity = self.degree/self.reservoir_size;
 			print("NETWORK SPARSITY: {:}".format(self.sparsity))
-			print("Computing sparse hidden to hidden weight matrix...")
+			# print("Computing sparse hidden to hidden weight matrix...")
 			W_h = self.getSparseWeights(self.reservoir_size, self.reservoir_size, self.radius, self.sparsity, self.worker_id)
 
 			# Initializing the input weights
-			print("Initializing the input weights...")
+			# print("Initializing the input weights...")
 			if self.component_wise:
 				W_in = np.zeros((self.reservoir_size, 1))
 				q = self.reservoir_size
@@ -492,7 +493,7 @@ class esn(object):
 							h[:,k] = np.tanh(self.W_h @ h[:,k] + self.W_in @ i[k])
 					else:
 						h = np.tanh(self.W_h @ h + self.W_in @ i)
-		print("\n")
+		# print("\n")
 		return h
 
 	def x_t(self, t, t0=0):
@@ -506,34 +507,13 @@ class esn(object):
 
 		return (1 - tmid) * v0 + tmid * v1
 
-	def xdot_t(self, t, t0=0, N=10):
-		'''differentiate self.x_vec at time t'''
-		# Note N should be EVEN (wasteful to check/fix here)
+	def xdot_t(self, t):
+		'''differentiate self.x_vec at time t using stored component-wise spline interpolant'''
 
 		# initialize output
 		xdot = np.zeros(self.input_dim)
-
-		# find location of t in self.x_vec
-		ind_mid = (t-t0) / self.dt
-
-		# pick a narrow window of N points around time t
-		ind_low = max(int(np.floor(ind_mid - N/2)), 0)
-		ind_high = min(int(np.ceil(ind_mid + N/2)), self.x_vec.shape[0])
-		f_win = self.x_vec[ind_low:ind_high,:]
-		t_win = t0 + self.dt*np.arange(ind_low, ind_high)
-
-		# compute kth component of derivative
 		for k in range(self.input_dim):
-			# compute cubic spline interpolant of kth component
-			yk = f_win[:,k]
-			fk = CubicSpline(x=t_win, y=yk)
-
-			# differentiate the interpolant
-			dfk = fk.derivative()
-
-			# evaluate the derivative at time t
-			xdot[k] = dfk(t)
-
+			xdot[k] = self.xdot_spline[k](t)
 		return xdot
 
 	def mdag(self, t, x, xdot):
@@ -575,7 +555,6 @@ class esn(object):
 	def newMethod_getIC(self, T_warmup, T_train):
 		# generate ICs for training integration
 		if self.learn_memory:
-			print('Warmup-integrations...')
 			# warm up reservoir state if learning memory
 			r0 = np.zeros(self.reservoir_size)
 			r_aug0 = self.augmentHidden(r0)
@@ -593,10 +572,13 @@ class esn(object):
 			else:
 				y0 = np.hstack( (r0, Zrr0, Yr0) )
 
+			print('Integrating over warmup data...')
+			timer_start = time.time()
 			t_span = [0, T_warmup]
 			t_eval = np.array([T_warmup])
 			sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
 			y0 = np.squeeze(sol.y)
+			print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
 		elif self.learn_markov:
 			x0 = self.x_t(t=T_warmup)
 			xdot0 = self.xdot_t(t=T_warmup)
@@ -668,9 +650,14 @@ class esn(object):
 		self.Z = Z / T_train
 
 
-	def newMethod(self, h, tl, dynamics_length, train_input_sequence):
+	def newMethod(self, tl, dynamics_length, train_input_sequence):
 
 		self.x_vec = train_input_sequence
+
+		# get spline derivative
+		t_vec = self.dt*np.arange(self.x_vec.shape[0])
+		self.xdot_spline = [CubicSpline(x=t_vec, y=self.x_vec[:,k]).derivative() for k in range(self.input_dim)]
+
 		T_warmup = self.dt*dynamics_length
 		T_train = self.dt*tl
 
@@ -678,19 +665,21 @@ class esn(object):
 
 		# Perform training integration using IC y0
 		print('Integrating over training data...')
+		timer_start = time.time()
 		t_span = [T_warmup, T_warmup + T_train]
 		# t_eval = np.array([T_warmup + T_train])
 		# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
 		sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, max_step=self.dt/2)
+		print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
 
 		# plot the integration
 		if self.learn_memory:
-			print('Plotting reservoir state...')
+			# print('Plotting reservoir state...')
 			newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL', dt=self.dt)
 			self.r_aug = self.augmentHidden(sol.y[:self.reservoir_size,:].T)
 
 		# allocate, reshape, normalize, and save solutions
-		print('Saving Y,Z...')
+		print('Compute final Y,Z...')
 		self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
 
 
@@ -714,7 +703,7 @@ class esn(object):
 		elif self.learn_memory:
 			self.W_out_memory = W_out_all
 
-		print("FINALISING WEIGHTS...")
+		# print("FINALISING WEIGHTS...")
 		if self.learn_markov:
 			plotMatrix(self, self.W_out_markov, 'W_out_markov')
 		if self.learn_memory:
@@ -807,7 +796,6 @@ class esn(object):
 		for k in range(self.input_dim):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
 			ax[k].plot(time_vec, true_residual[:,k] - predicted_residual[:,k], linewidth=2)
-		ax[-1].legend()
 		plt.suptitle('Timewise errors with total MSE {mse:.5}'.format(mse=mse))
 		plt.savefig(fig_path)
 		plt.close()
@@ -831,7 +819,6 @@ class esn(object):
 				Pxx_den_SUM += Pxx_den
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
 			ax[k].semilogx(f, Pxx_den)
-		ax[-1].legend()
 		ax[-1].set_xlabel('frequency [Hz]')
 		fig.suptitle('PSD [V**2/Hz]')
 		plt.savefig(fig_path)
@@ -896,7 +883,7 @@ class esn(object):
 			# Pickle the "data" dictionary using the highest protocol available.
 			data = pickle.load(file)
 			train_input_sequence = data["train_input_sequence"]
-			print("Adding noise to the training data. {:} per mille ".format(self.noise_level))
+			print("Adding {:} noise to the training data.".format(self.noise_level))
 			train_input_sequence = addNoise(train_input_sequence, self.noise_level)
 			N_all, dim = np.shape(train_input_sequence)
 			if input_dim > dim: raise ValueError("Requested input dimension is wrong.")
@@ -904,10 +891,10 @@ class esn(object):
 			dt = data["dt"]
 			del data
 
-		print("##Using {:}/{:} dimensions and {:}/{:} samples ##".format(input_dim, dim, N_used, N_all))
+		print("Using {:}/{:} dimensions and {:}/{:} samples".format(input_dim, dim, N_used, N_all))
 		if N_used > N_all: raise ValueError("Not enough samples in the training data.")
-		print("SCALING")
 
+		# print("SCALING")
 		train_input_sequence = self.scaler.scaleData(train_input_sequence)
 
 		N, input_dim = np.shape(train_input_sequence)
@@ -918,21 +905,19 @@ class esn(object):
 		# TRAINING LENGTH
 		tl = N - dynamics_length
 
-		print("TRAINING: Dynamics prerun...")
+		# print("TRAINING: Dynamics prerun...")
 		# H_dyn = np.zeros((dynamics_length, self.getAugmentedStateSize(), 1))
 
 		# Initialize reservoir state
-		self.set_h_zeros()
-		h = self.get_h_DL(dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+		# self.set_h_zeros()
+		# h = self.get_h_DL(dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
 
 		# alternative method for training!!!
-		self.newMethod(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
+		self.newMethod(tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
 
 		# alternative method for solving!!!
-		print('Solving Y,Z...')
+		print('Solving inverse problem W = (Z+rI)^-1 Y...')
 		self.doNewSolving()
-
-		# pdb.set_trace()
 
 		# Teacher Forcing
 		# self.doTeacherForcing(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
@@ -951,12 +936,14 @@ class esn(object):
 
 		# raise ValueError('shortcut stoppage!')
 
-		print("COMPUTING PARAMETERS...")
-		self.n_trainable_parameters = np.size(self.W_out_memory) + np.size(self.W_out_markov)
-		self.n_model_parameters = np.size(self.W_in) + np.size(self.W_h) + np.size(self.W_out_memory) + np.size(self.W_out_markov) + np.size(self.W_in_markov) + np.size(self.b_h_markov)
+		# print("COMPUTING PARAMETERS...")
+		self.n_trainable_parameters = self.learn_memory*np.size(self.W_out_memory) + self.learn_markov*np.size(self.W_out_markov)
+		self.n_model_parameters = self.learn_memory*(np.size(self.W_in) + np.size(self.W_h) + np.size(self.b_h))
+		self.n_model_parameters += self.learn_markov*(np.size(self.W_in_markov) + np.size(self.b_h_markov))
+		self.n_model_parameters += self.n_trainable_parameters
 		print("Number of trainable parameters: {}".format(self.n_trainable_parameters))
 		print("Total number of parameters: {}".format(self.n_model_parameters))
-		print("SAVING MODEL...")
+		# print("SAVING MODEL...")
 		self.saveModel()
 
 		# plot matrix spectrum
@@ -1121,7 +1108,6 @@ class esn(object):
 				h = (I + self.dt*(W_h-W_h.T - gammaI)) @ h + self.dt * np.tanh(W_in @ i)
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
-		print("\n")
 
 		out = i
 		target = target_sequence
@@ -1151,7 +1137,6 @@ class esn(object):
 			else:
 				h = np.tanh(W_h @ h + W_in @ i)
 
-		print("\n")
 		prediction = np.array(prediction)[:,:,0]
 		target = np.array(target)
 		signal = np.array(signal)
@@ -1231,7 +1216,7 @@ class esn(object):
 		num_accurate_pred_050_all = []
 		for ic_num in range(num_test_ICS):
 			if self.display_output == True:
-				print("IC {:}/{:}, {:2.3f}%".format(ic_num, num_test_ICS, ic_num/num_test_ICS*100))
+				print("\n##### {:} IC {:}/{:}, {:2.3f}% #####".format(set_name, ic_num, num_test_ICS, ic_num/num_test_ICS*100), end='\r')
 			ic_idx = ic_indexes[ic_num]
 			input_sequence_ic = input_sequence[ic_idx-self.dynamics_length:ic_idx+self.iterative_prediction_length]
 			prediction, target, prediction_augment, target_augment, hidden, hidden_augment = self.predictSequence(input_sequence_ic)
@@ -1246,7 +1231,7 @@ class esn(object):
 			num_accurate_pred_005_all.append(num_accurate_pred_005)
 			num_accurate_pred_050_all.append(num_accurate_pred_050)
 			# PLOTTING ONLY THE FIRST THREE PREDICTIONS
-			print('First target:', target_augment[0])
+			# print('First target:', target_augment[0])
 			if num_test_ICS==1 and set_name=='TRAIN' and not all(target_augment[0]==self.first_train_vec) and self.noise_level==0:
 				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
@@ -1262,9 +1247,9 @@ class esn(object):
 		num_accurate_pred_005_all = np.array(num_accurate_pred_005_all)
 		num_accurate_pred_050_all = np.array(num_accurate_pred_050_all)
 
-		print("TRAJECTORIES SHAPES:")
-		print(np.shape(truths_all))
-		print(np.shape(predictions_all))
+		# print("TRAJECTORIES SHAPES:")
+		# print(np.shape(truths_all))
+		# print(np.shape(predictions_all))
 		rmnse_avg = np.mean(rmnse_all)
 		print("AVERAGE RMNSE ERROR: {:}".format(rmnse_avg))
 		num_accurate_pred_005_avg = np.mean(num_accurate_pred_005_all)
@@ -1322,16 +1307,16 @@ class esn(object):
 			return 1
 
 	def saveModel(self):
-		print("Recording time...")
+		# print("Recording time...")
 		self.total_training_time = time.time() - self.start_time
-		print("Total training time is {:}".format(self.total_training_time))
+		print("Total training time is {:2.2f} minutes".format(self.total_training_time/60))
 
-		print("MEMORY TRACKING IN MB...")
+		# print("MEMORY TRACKING IN MB...")
 		process = psutil.Process(os.getpid())
 		memory = process.memory_info().rss/1024/1024
 		self.memory = memory
 		print("Script used {:} MB".format(self.memory))
-		print("SAVING MODEL...")
+		# print("SAVING MODEL...")
 
 		if self.write_to_log == 1:
 			logfile_train = self.saving_path + self.logfile_dir + self.model_name  + "/train.txt"
