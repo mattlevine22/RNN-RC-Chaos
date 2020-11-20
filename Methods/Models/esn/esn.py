@@ -544,7 +544,7 @@ class esn(object):
 		return m
 
 	def q_t(self, x_t):
-		q = np.tanh(self.W_in_markov @ x_t + self.b_h_markov)
+		q = np.tanh(self.W_in_markov @ x_t + np.squeeze(self.b_h_markov))
 		return q
 
 	def rcrf_rhs(self, t, S):
@@ -575,6 +575,7 @@ class esn(object):
 	def newMethod_getIC(self, T_warmup, T_train):
 		# generate ICs for training integration
 		if self.learn_memory:
+			print('Warmup-integrations...')
 			# warm up reservoir state if learning memory
 			r0 = np.zeros(self.reservoir_size)
 			r_aug0 = self.augmentHidden(r0)
@@ -676,6 +677,7 @@ class esn(object):
 		y0 = self.newMethod_getIC(T_warmup=T_warmup, T_train=T_train)
 
 		# Perform training integration using IC y0
+		print('Integrating over training data...')
 		t_span = [T_warmup, T_warmup + T_train]
 		# t_eval = np.array([T_warmup + T_train])
 		# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
@@ -683,9 +685,12 @@ class esn(object):
 
 		# plot the integration
 		if self.learn_memory:
+			print('Plotting reservoir state...')
 			newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL', dt=self.dt)
 			self.r_aug = self.augmentHidden(sol.y[:self.reservoir_size,:].T)
+
 		# allocate, reshape, normalize, and save solutions
+		print('Saving Y,Z...')
 		self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
 
 
@@ -709,190 +714,12 @@ class esn(object):
 		elif self.learn_memory:
 			self.W_out_memory = W_out_all
 
-		return
-
-	def doTeacherForcing(self, train_input_sequence, tl, dynamics_length, h):
-
-		matt_offset = 1 + int(self.output_dynamics in ["simpleRHS", "andrewRHS"])
-		n_range = tl - matt_offset
-
-		self.H_markov = []
-		self.H_memory = []
-		self.H_memory_big = None
-		H_memory = []
-		H_markov = []
-		Y = []
-
-		Y_true = []
-		Y_all = []
-		X = [] # true ground states
-
-		HTH = 0
-		YTH = 0
-		HmarkTHmark = 0
-		YTHmark = 0
-		HmarkTHmem = 0
-
-		# if self.solver == "pinv":
-		NORMEVERY = 10
-		if self.learn_memory:
-			HTH = np.zeros((self.getAugmentedStateSize(), self.getAugmentedStateSize()))
-			if self.component_wise:
-				YTH = np.zeros((1, self.getAugmentedStateSize()))
-				self.H_aug_memory_big = np.zeros( (n_range, self.getAugmentedStateSize(), self.input_dim) )
-				self.H_memory_big = np.zeros( (n_range, self.getAugmentedStateSize(), self.input_dim) )
-			else:
-				YTH = np.zeros((self.input_dim, self.getAugmentedStateSize()))
-				self.H_aug_memory_big = np.zeros( (n_range, self.getAugmentedStateSize()) )
-				self.H_memory_big = np.zeros( (n_range, self.getAugmentedStateSize()) )
+		print("FINALISING WEIGHTS...")
 		if self.learn_markov:
-			HmarkTHmark = np.zeros( (self.rf_dim, self.rf_dim))
-			if self.component_wise:
-				YTHmark = np.zeros( (1, self.rf_dim))
-				self.H_markov_big = np.zeros( (n_range, self.rf_dim, self.input_dim) )
-			else:
-				YTHmark = np.zeros( (self.input_dim, self.rf_dim))
-				self.H_markov_big = np.zeros( (n_range, self.rf_dim) )
-		if self.learn_markov and self.learn_memory:
-			HmarkTHmem = np.zeros( (self.rf_dim, self.getAugmentedStateSize()))
-
-
-		print("TRAINING: Teacher forcing...")
-
-		for t in range(n_range):
-			if self.display_output == True:
-				print("TRAINING - Teacher forcing: T {:}/{:}, {:2.3f}%".format(t, tl, t/tl*100), end="\r")
-			i = np.reshape(train_input_sequence[t+dynamics_length], (-1,1))
-
-			# MEMORY / RC SECTION
-			if self.learn_memory:
-				if self.hidden_dynamics in ['ARNN', 'naiveRNN']:
-					if self.component_wise:
-						for k in range(self.input_dim):
-							h[:,k] += self.dt * np.tanh(self.W_h_effective @ h[:,k] + self.W_in @ i[k] + np.squeeze(self.b_h))
-					else:
-						h = h + self.dt * np.tanh(self.W_h_effective @ h + self.W_in @ i + self.b_h)
-				elif self.hidden_dynamics=='LARNN_forward':
-					if self.component_wise:
-						for k in range(self.input_dim):
-							h[:,k] = (I + self.dt*self.W_h_effective) @ h[:,k] + self.dt * np.tanh(self.W_in @ i[k])
-					else:
-						h = (I + self.dt*self.W_h_effective) @ h + self.dt * np.tanh(self.W_in @ i)
-				else:
-					if self.component_wise:
-						for k in range(self.input_dim):
-							h[:,k] = np.tanh(W_h @ h[:,k] + self.W_in @ i[k])
-					else:
-						h = np.tanh(W_h @ h + self.W_in @ i)
-				# AUGMENT THE HIDDEN STATE
-				if self.component_wise:
-					for k in range(self.input_dim):
-						h_aug = self.augmentHidden(h[:,k,None])
-						H_memory.append(h_aug[:,0])
-						self.H_aug_memory_big[t,:,k] = h_aug[:,0]
-						self.H_memory_big[t,:,k] = h[:,k]
-				else:
-					h_aug = self.augmentHidden(h)
-					H_memory.append(h_aug[:,0])
-					self.H_aug_memory_big[t,:] = h_aug[:,0]
-					self.H_memory_big[t,:] = h[:,0]
-
-			# MARKOV / RF SECTION
-			if self.learn_markov:
-				if self.component_wise:
-					for k in range(self.input_dim):
-						h_markov = np.tanh(self.W_in_markov @ i[k,None] + self.b_h_markov)
-						H_markov.append(h_markov[:,0])
-						self.H_markov_big[t,:,k] = h_markov[:,0]
-				else:
-					h_markov = np.tanh(self.W_in_markov @ i + self.b_h_markov)
-					H_markov.append(h_markov[:,0])
-					self.H_markov_big[t,:] = h_markov[:,0]
-
-			# TARGET DATA SECTION
-			if self.output_dynamics=='simpleRHS':
-				# FORWARD DIFFERENCE---infer derivative at time t+dl
-				t0=0
-				u0 = self.scaler.descaleData(train_input_sequence[t+dynamics_length])
-				if self.use_f0:
-					f0 = self.f0(t0=t0, u0=u0)
-					f0 = f0 / self.scaler.data_std
-					f0 = np.reshape(f0, (-1,1))
-				else:
-					f0 = 0
-				target = (np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / self.dt - f0
-				try:
-					true_derivative = lorenz(t0=t0, u0=u0)
-					Y_true.append(true_derivative)
-				except:
-					# fails when RDIM is not full state space
-					pass
-			elif self.output_dynamics=='andrewRHS':
-				# FORWARD DIFFERENCE
-				target = np.reshape(train_input_sequence[t+dynamics_length], (-1,1)) + ((np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1)) - np.reshape(train_input_sequence[t+dynamics_length], (-1,1))) / (self.dt*self.lam) )
-			else:
-				target = np.reshape(train_input_sequence[t+dynamics_length+1], (-1,1))
-
-			# STORE COLLECTED DATA IN NEW STRUCTURES
-			if self.component_wise:
-				for k in range(self.input_dim):
-					Y.append(target[k,0])
-			else:
-				Y.append(target[:,0])
-
-			Y_all.append(target[:,0])
-			X.append(train_input_sequence[t+dynamics_length,:])
-
-
-
-			self.H_markov += H_markov
-			self.H_memory += H_memory
-
-			last_batch = t==(n_range - 1)
-			if self.solver == "pinv" and ((t % NORMEVERY == 0) or last_batch):
-				# Batched approach used in the pinv case
-				Y = np.array(Y)
-				# RC-only stuff
-				if self.learn_memory:
-					H_memory = np.array(H_memory)
-					HTH += H_memory.T @ H_memory
-					YTH += Y.T @ H_memory
-
-				# RF-only stuff
-				if self.learn_markov:
-					H_markov = np.array(H_markov)
-					HmarkTHmark += H_markov.T @ H_markov
-					YTHmark += Y.T @ H_markov
-
-				# RC + RF joint stuff
-				if self.learn_memory and self.learn_markov:
-					HmarkTHmem += H_markov.T @ H_memory
-
-				Y = []
-				H_markov = []
-				H_memory = []
-
-
-		print("TEACHER FORCING ENDED.")
-		print('\nmax(x)=',np.max(train_input_sequence))
-		print('mean(x)=',np.mean(train_input_sequence))
-		print('std(x)=',np.std(train_input_sequence))
-
-		Y_all = np.array(Y_all)
-		print('\nmax(Y)=',np.max(Y_all))
-		print('mean(Y)=',np.mean(Y_all))
-		print('std(Y)=',np.std(Y_all))
-
-
-		# save things to self
-		self.HTH = HTH/n_range
-		self.YTH = YTH/n_range
-		self.HmarkTHmark = HmarkTHmark/n_range
-		self.YTHmark = YTHmark/n_range
-		self.HmarkTHmem = HmarkTHmem/n_range
-		self.Y_all = np.array(Y_all)
-		self.X = np.array(X)
-		self.Y_true = Y_true
+			plotMatrix(self, self.W_out_markov, 'W_out_markov')
+		if self.learn_memory:
+			plotMatrix(self, self.W_out_memory, 'W_out_memory')
+		return
 
 	def getPrediction(self):
 		pred = np.zeros( (self.X.shape[0], self.input_dim) )
@@ -911,78 +738,7 @@ class esn(object):
 
 		self.pred = pred
 
-	def doSolving(self):
-
-		print("\nSOLVER used to find W_out: {:}. \n\n".format(self.solver))
-
-		if self.solver == "pinv":
-			"""
-			Learns mapping H -> Y with Penrose Pseudo-Inverse
-			"""
-			HTH = self.HTH
-			YTH = self.YTH
-			HmarkTHmem = self.HmarkTHmem
-			YTHmark = self.YTHmark
-			HmarkTHmark = self.HmarkTHmark
-
-			if self.learn_memory and self.learn_markov:
-				Z = np.hstack( ( np.vstack( (HTH, HmarkTHmem) ), np.vstack( (HmarkTHmem.T, HmarkTHmark) ) ) )
-				regI = np.identity(Z.shape[0])
-				regI[:self.reservoir_size,:self.reservoir_size] *= self.regularization_RC
-				regI[self.reservoir_size:,self.reservoir_size:] *= self.regularization_RF
-				pinv_ = scipypinv2(Z + regI)
-
-				YTH_stack = np.hstack( (YTH, YTHmark) )
-				W_out_all = YTH_stack @ pinv_
-				W_out_memory = W_out_all[:,:self.reservoir_size]
-				W_out_markov = W_out_all[:,self.reservoir_size:]
-
-			elif self.learn_markov:
-				I = np.identity(np.shape(HmarkTHmark)[1])
-				pinv_ = scipypinv2(HmarkTHmark + self.regularization_RF*I)
-				W_out_markov = YTHmark @ pinv_
-
-			elif self.learn_memory:
-				I = np.identity(np.shape(HTH)[1])
-				pinv_ = scipypinv2(HTH + self.regularization_RC*I)
-				W_out_memory = YTH @ pinv_
-
-		elif self.solver in ["auto", "svd", "cholesky", "lsqr", "sparse_cg", "sag"]:
-			"""
-			Learns mapping H -> Y with Ridge Regression
-			"""
-			Y = np.array(self.Y_all)
-			if self.output_dynamics=='simpleRHS':
-				Y = self.scaler.scaleDerivatives(Y)
-				print('\nmax(Y_norm)=',np.max(Y))
-				print('mean(Y_norm)=',np.mean(Y))
-				print('std(Y_norm)=',np.std(Y))
-
-			# group Markovian-RFs and reservoir states
-			if self.learn_markov and self.learn_memory:
-				raise ValueError('Not yet ready to jointly learn both markov and memory terms with ridge regression')
-			elif self.learn_markov:
-				ridge = Ridge(alpha=self.regularization_RF, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
-				ridge.fit(self.H_markov, Y)
-				W_out_markov = ridge.coef_
-			elif self.learn_memory:
-				ridge = Ridge(alpha=self.regularization_RC, fit_intercept=False, normalize=False, copy_X=True, solver=self.solver)
-				ridge.fit(self.H_memory, Y)
-				W_out_memory = ridge.coef_
-
-		else:
-			raise ValueError("Undefined solver.")
-
-		print("FINALISING WEIGHTS...")
-		if self.learn_markov:
-			self.W_out_markov = W_out_markov
-			plotMatrix(self, self.W_out_markov, 'W_out_markov')
-		if self.learn_memory:
-			self.W_out_memory = W_out_memory
-			plotMatrix(self, self.W_out_memory, 'W_out_memory')
-
-
-	def makeNewPlots(self, true_state, true_residual, predicted_residual, H_memory_big=None, set_name=''):
+	def makeNewPlots(self, true_state, true_residual, predicted_residual, H_memory_big=None, set_name='', ic_idx=''):
 		n_times = true_state.shape[0] # self.X
 		time_vec = np.arange(n_times)*self.dt
 		# true_residual: self.Y_all
@@ -990,7 +746,7 @@ class esn(object):
 		## Plot original hidden dynamics
 		if self.learn_memory and H_memory_big is not None:
 			## Plot H
-			fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_raw_{}.png".format(set_name)
+			fig_path = self.saving_path + self.fig_dir + self.model_name + "/hidden_raw_{}_{}.png".format(set_name, ic_idx)
 			fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 6))
 			ax.set_xlabel(r"Time $t$", fontsize=12)
 			ax.set_ylabel(r"State $h$", fontsize=12)
@@ -1007,7 +763,7 @@ class esn(object):
 		## Plot the learned markovian function
 		# Treat states as interchangeable:
 		# Plot X_k vs (Y_k prediction, Y_k truth)
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_fits_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/statewise_fits_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(8, 6))
 		ax.set_xlabel(r"State $X_k$", fontsize=12)
 		ax.set_ylabel(r"Correction $Y_k$", fontsize=12)
@@ -1034,7 +790,7 @@ class esn(object):
 		mse = np.mean( (true_residual - predicted_residual)**2)
 
 		# plot over time
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_fits_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_fits_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
@@ -1046,7 +802,7 @@ class esn(object):
 		plt.close()
 
 		# plot over time
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_errors_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/timewise_errors_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			ax[k].set_ylabel(r"$Y_{k}$".format(k=k), fontsize=12)
@@ -1057,7 +813,7 @@ class esn(object):
 		plt.close()
 
 		# Plot PSD
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSD_errors_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSD_errors_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 
 		err_mat = (true_residual - predicted_residual)**2
@@ -1083,7 +839,7 @@ class esn(object):
 
 		# Plot avg PSD across trajectories
 		Pxx_den_SUM /= self.input_dim
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSDavg_errors_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/PSDavg_errors_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
 		ax.set_ylabel('PSD [V**2/Hz]', fontsize=12)
 		ax.set_xlabel('frequency [Hz]')
@@ -1096,7 +852,7 @@ class esn(object):
 
 		# Plot CROSS-CORRELATION between true data sequence and prediction error sequence
 		true_mat = (true_state - np.mean(true_state,0)) / np.std(true_state,0)
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORR_truth_vs_error_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORR_truth_vs_error_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=self.input_dim, ncols=1,figsize=(12, 12))
 		for k in range(self.input_dim):
 			xcorr = matt_xcorr(x=true_mat[:,k], y=err_mat[:,k])
@@ -1116,7 +872,7 @@ class esn(object):
 		plt.close()
 
 		# Plot avgCROSS-CORRELATION between true data sequence and prediction error sequence
-		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORRavg_truth_vs_error_{}.png".format(set_name)
+		fig_path = self.saving_path + self.fig_dir + self.model_name + "/XCORRavg_truth_vs_error_{}_{}.png".format(set_name, ic_idx)
 		fig, ax = plt.subplots(nrows=1, ncols=1,figsize=(12, 12))
 		xcorr_SUM /= self.input_dim
 		ax.set_ylabel(r"Correlation", fontsize=12)
@@ -1173,6 +929,7 @@ class esn(object):
 		self.newMethod(h=h, tl=tl, dynamics_length=dynamics_length, train_input_sequence=train_input_sequence)
 
 		# alternative method for solving!!!
+		print('Solving Y,Z...')
 		self.doNewSolving()
 
 		# pdb.set_trace()
@@ -1494,7 +1251,7 @@ class esn(object):
 				raise ValueError('Training trajectories are not aligned')
 			if ic_num < 3: plotIterativePrediction(self, set_name, target, prediction, rmse, rmnse, ic_idx, dt, target_augment, prediction_augment, warm_up=self.dynamics_length, hidden=hidden, hidden_augment=hidden_augment)
 			# plot more things
-			self.makeNewPlots(true_state=target, true_residual=target, predicted_residual=prediction, set_name=set_name)
+			self.makeNewPlots(true_state=target, true_residual=target, predicted_residual=prediction, set_name=set_name, ic_idx=ic_idx)
 
 
 		predictions_all = np.array(predictions_all)
