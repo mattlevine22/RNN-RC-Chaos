@@ -414,11 +414,13 @@ class esn(object):
 
 		# initialize markovian random terms for Random Feature Maps
 		if self.learn_markov:
+			b_h_markov = np.random.uniform(low=-self.rf_bias_bound, high=self.rf_bias_bound, size=(self.rf_dim, 1))
 			if self.component_wise:
 				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, 1))
+				# W_in_markov = np.kron(np.eye(self.input_dim, dtype=int), W_in_markov)
+				# b_h_markov = np.tile(b_h_markov, (self.input_dim,1))
 			else:
 				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim))
-			b_h_markov = np.random.uniform(low=-self.rf_bias_bound, high=self.rf_bias_bound, size=(self.rf_dim, 1))
 
 			self.W_in_markov = W_in_markov
 			self.b_h_markov = b_h_markov
@@ -527,10 +529,15 @@ class esn(object):
 		q = np.tanh(self.W_in_markov @ x_t + np.squeeze(self.b_h_markov))
 		return q
 
-	def rcrf_rhs(self, t, S):
+	def rcrf_rhs(self, t, S, k=None):
+		'''k is the component when doing component-wise models'''
 		x = self.x_t(t=t)
 		xdot = self.xdot_t(t=t)
 		m = self.mdag(t, x, xdot)
+		if self.component_wise:
+			x = x[k,None]
+			xdot = xdot[k,None]
+			m = m[k,None]
 
 		if self.learn_memory:
 			r = S[:self.reservoir_size]
@@ -554,45 +561,92 @@ class esn(object):
 
 	def newMethod_getIC(self, T_warmup, T_train):
 		# generate ICs for training integration
+		yall = []
+
 		if self.learn_memory:
-			# warm up reservoir state if learning memory
-			r0 = np.zeros(self.reservoir_size)
-			r_aug0 = self.augmentHidden(r0)
 			x0 = self.x_t(t=0)
 			xdot0 = self.xdot_t(t=0)
 			m0 = self.mdag(t=0, x=x0, xdot=xdot0)
-			Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
-			Yr0 = np.outer(r_aug0, m0).reshape(-1)
-			if self.learn_markov:
-				q0 = self.q_t(x0)
-				Zqq0 = np.outer(q0, q0).reshape(-1)
-				Yq0 = np.outer(q0, m0).reshape(-1)
-				Zrq0 = np.outer(r_aug0, q0).reshape(-1)
-				y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
-			else:
-				y0 = np.hstack( (r0, Zrr0, Yr0) )
+			if self.component_wise:
+				print('Integrating over warmup data...')
+				timer_start = time.time()
+				t_span = [0, T_warmup]
+				t_eval = np.array([T_warmup])
+				for k in range(self.input_dim):
+					x0k = x0[k,None]
+					m0k = m0[k,None]
+					# warm up reservoir state if learning memory
+					r0 = np.zeros(self.reservoir_size)
+					r_aug0 = self.augmentHidden(r0)
+					Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
+					Yr0 = np.outer(r_aug0, m0k).reshape(-1)
+					if self.learn_markov:
+						q0k = self.q_t(x0k)
+						Zqq0 = np.outer(q0k, q0k).reshape(-1)
+						Yq0 = np.outer(q0k, m0k).reshape(-1)
+						Zrq0 = np.outer(r_aug0, q0k).reshape(-1)
+						y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
+					else:
+						y0 = np.hstack( (r0, Zrr0, Yr0) )
 
-			print('Integrating over warmup data...')
-			timer_start = time.time()
-			t_span = [0, T_warmup]
-			t_eval = np.array([T_warmup])
-			sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
-			y0 = np.squeeze(sol.y)
-			print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
+					sol = solve_ivp(fun=lambda t, y: self.rcrf_rhs(t, y, k=k), t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+					y0 = np.squeeze(sol.y)
+					yall.append(y0)
+				print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
+			else:
+				# warm up reservoir state if learning memory
+				r0 = np.zeros(self.reservoir_size)
+				r_aug0 = self.augmentHidden(r0)
+				Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
+				Yr0 = np.outer(r_aug0, m0).reshape(-1)
+				if self.learn_markov:
+					q0 = self.q_t(x0)
+					Zqq0 = np.outer(q0, q0).reshape(-1)
+					Yq0 = np.outer(q0, m0).reshape(-1)
+					Zrq0 = np.outer(r_aug0, q0).reshape(-1)
+					y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
+				else:
+					y0 = np.hstack( (r0, Zrr0, Yr0) )
+
+				print('Integrating over warmup data...')
+				timer_start = time.time()
+				t_span = [0, T_warmup]
+				t_eval = np.array([T_warmup])
+				sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+				yall = np.squeeze(sol.y)
+				print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
 		elif self.learn_markov:
 			x0 = self.x_t(t=T_warmup)
 			xdot0 = self.xdot_t(t=T_warmup)
 			m0 = self.mdag(t=T_warmup, x=x0, xdot=xdot0)
-			q0 = self.q_t(x0)
-			Zqq0 = np.outer(q0, q0).reshape(-1)
-			Yq0 = np.outer(q0, m0).reshape(-1)
-			y0 = np.hstack( (Zqq0, Yq0) )
+			if self.component_wise:
+				for k in range(self.input_dim):
+					x0k = x0[k,None]
+					m0k = m0[k,None]
+					q0k = self.q_t(x0k)
+					Zqq0 = np.outer(q0k, q0k).reshape(-1)
+					Yq0 = np.outer(q0k, m0k).reshape(-1)
+					y0 = np.hstack( (Zqq0, Yq0) )
+					yall.append(y0)
+			else:
+				q0 = self.q_t(x0)
+				Zqq0 = np.outer(q0, q0).reshape(-1)
+				Yq0 = np.outer(q0, m0).reshape(-1)
+				yall = np.hstack( (Zqq0, Yq0) )
 		else:
-			y0 = np.array([])
+			yall = []
 
-		return y0
+		yall = np.array(yall)
+
+		return yall
 
 	def newMethod_saveYZ(self, yend, T_train):
+
+		if self.component_wise:
+			in_dim = 1
+		else:
+			in_dim = self.input_dim
+
 		if self.learn_memory and self.learn_markov:
 			# y0 = np.hstack( (r0, Zrr0, Zrq0, Zqq0, Yq0, Yr0) )
 			r = yend[:self.reservoir_size]
@@ -614,30 +668,37 @@ class esn(object):
 
 			#Yq
 			i_start = i_end
-			i_end = i_start + self.rf_dim**self.input_dim
+			i_end = i_start + self.rf_dim*in_dim
 			Yq = yend[i_start:i_end]
 
 			#Yr
 			Yr = yend[i_end:]
 
-			Y = np.hstack( (Yr, Yq) )
-			Z = np.hstack( ( np.vstack( (Zrr, Zrq) ), np.vstack( (Zrq.T, Zqq) ) ) )
 		elif self.learn_markov:
 			# y0 = np.hstack( (Zqq0, Yq0) )
-			Zqq = yend[:self.rf_dim**2].reshape(self.rf_dim, self.rf_dim)
-			Yq = yend[self.rf_dim**2:].reshape(self.rf_dim, self.input_dim)
+			Zqq = yend[:self.rf_dim**2]
+			Yq = yend[self.rf_dim**2:]
 		elif self.learn_memory:
 			# y0 = np.hstack( (r0, Zrr0, Yr0) )
 			r = yend[:self.reservoir_size]
 			i_start = self.reservoir_size
 			i_end = i_start + self.reservoir_size**2
-			Zrr = yend[i_start:i_end].reshape(self.reservoir_size, self.reservoir_size)
-			Yr = yend[i_end:].reshape(self.reservoir_size, self.input_dim)
+			Zrr = yend[i_start:i_end]
+			Yr = yend[i_end:]
 
 		# Concatenate solutions into big matrices Y, Z
 		if self.learn_memory and self.learn_markov:
-			Y = np.hstack( (Yr, Yq) )
-			Z = np.hstack( ( np.vstack( (Zrr, Zrq) ), np.vstack( (Zrq.T, Zqq) ) ) )
+			Zrq = Zrq.reshape(self.reservoir_size, self.rf_dim)
+		if self.learn_memory:
+			Zrr = Zrr.reshape(self.reservoir_size, self.reservoir_size)
+			Yr = Yr.reshape(self.reservoir_size, in_dim)
+		if self.learn_markov:
+			Zqq = Zqq.reshape(self.rf_dim, self.rf_dim)
+			Yq = Yq.reshape(self.rf_dim, in_dim)
+
+		if self.learn_memory and self.learn_markov:
+			Y = np.vstack( (Yr, Yq) )
+			Z = np.vstack( ( np.hstack( (Zrr, Zrq) ), np.hstack( (Zrq.T, Zqq) ) ) )
 		elif self.learn_markov:
 			Y = Yq
 			Z = Zqq
@@ -649,8 +710,15 @@ class esn(object):
 			Z = np.zeros(1)
 
 		# save Time-Normalized Y,Z
-		self.Y = Y / T_train
-		self.Z = Z / T_train
+		if self.component_wise:
+			self.Y.append(Y / T_train)
+			self.Z.append(Z / T_train)
+		else:
+			self.Y = Y / T_train
+			self.Z = Z / T_train
+
+		# store Z size for building regularization identity matrix
+		self.reg_dim = Z.shape[0]
 
 
 	def newMethod(self, tl, dynamics_length, train_input_sequence):
@@ -666,28 +734,55 @@ class esn(object):
 
 		y0 = self.newMethod_getIC(T_warmup=T_warmup, T_train=T_train)
 
-		# Perform training integration using IC y0
-		print('Integrating over training data...')
-		timer_start = time.time()
-		t_span = [T_warmup, T_warmup + T_train]
-		# t_eval = np.array([T_warmup + T_train])
-		# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
-		sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, max_step=self.dt/2)
-		print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
+		if self.component_wise:
+			self.Y = []
+			self.Z = []
+			for k in range(self.input_dim):
+				# Perform training integration using IC y0
+				print('Integrating over training data...')
+				timer_start = time.time()
+				t_span = [T_warmup, T_warmup + T_train]
+				# t_eval = np.array([T_warmup + T_train])
+				# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+				sol = solve_ivp(fun=lambda t, y: self.rcrf_rhs(t, y, k=k), t_span=t_span, y0=y0[k], max_step=self.dt/2)
+				print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
 
-		# plot the integration
-		if self.learn_memory:
-			# print('Plotting reservoir state...')
-			newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL', dt=self.dt)
-			self.r_aug = self.augmentHidden(sol.y[:self.reservoir_size,:].T)
+				# plot the integration
+				if self.learn_memory:
+					# print('Plotting reservoir state...')
+					newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL_component{k}'.format(k=k), dt=self.dt)
+					# self.r_aug = self.vstack(self.r_aug, self.augmentHidden(sol.y[:self.reservoir_size,:].T))
 
-		# allocate, reshape, normalize, and save solutions
-		print('Compute final Y,Z...')
-		self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
+				# allocate, reshape, normalize, and save solutions
+				print('Compute final Y,Z component...')
+				self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
+			self.Y = np.vstack(self.Y)
+			self.Z = np.vstack(self.Z)
+		else:
+			# Perform training integration using IC y0
+			print('Integrating over training data...')
+			timer_start = time.time()
+			t_span = [T_warmup, T_warmup + T_train]
+			# t_eval = np.array([T_warmup + T_train])
+			# sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, t_eval=t_eval, max_step=self.dt/2)
+			sol = solve_ivp(fun=self.rcrf_rhs, t_span=t_span, y0=y0, max_step=self.dt/2)
+			print('...took {:2.2f} minutes'.format((time.time() - timer_start)/60))
+
+			# plot the integration
+			if self.learn_memory:
+				# print('Plotting reservoir state...')
+				newMethod_plotting(model=self, hidden=sol.y[:self.reservoir_size,:].T, set_name='TRAINORIGINAL', dt=self.dt)
+				# self.r_aug = self.augmentHidden(sol.y[:self.reservoir_size,:].T)
+
+			# allocate, reshape, normalize, and save solutions
+			print('Compute final Y,Z...')
+			self.newMethod_saveYZ(yend=sol.y[:,-1], T_train=T_train)
+			## FORGOT TO AUGMENT R STATE?
 
 
 	def doNewSolving(self):
-		regI = np.identity(self.Z.shape[0])
+		# regI = np.identity(self.Z.shape[0])
+		regI = np.identity(self.reg_dim)
 		if self.learn_memory and self.learn_markov:
 			regI[:self.reservoir_size,:self.reservoir_size] *= self.regularization_RC
 			regI[self.reservoir_size:,self.reservoir_size:] *= self.regularization_RF
@@ -696,8 +791,13 @@ class esn(object):
 		elif self.learn_memory:
 			regI *= self.regularization_RC
 
+		if self.component_wise:
+			# stack regI K times
+			regI = np.tile(regI,(self.input_dim,1))
+
 		pinv_ = scipypinv2(self.Z + regI)
-		W_out_all = self.Y.T @ pinv_
+		# W_out_all = self.Y.T @ pinv_ # old code
+		W_out_all = (pinv_ @ self.Y).T # basically the same...very slight differences due to numerics
 		if self.learn_memory and self.learn_markov:
 			self.W_out_memory = W_out_all[:,:self.reservoir_size]
 			self.W_out_markov = W_out_all[:,self.reservoir_size:]
