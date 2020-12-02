@@ -149,7 +149,7 @@ class esn(object):
 			t_span = [t0, t0+self.dt]
 			t_eval = np.array([t0+self.dt])
 			# sol = solve_ivp(fun=lambda t, y: self.rhs(t0, y0), t_span=t_span, y0=u0, method=testcontinuous_ode_int_method, rtol=testcontinuous_ode_int_rtol, atol=testcontinuous_ode_int_atol, max_step=testcontinuous_ode_int_max_step, t_eval=t_eval)
-			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt)
+			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt/2)
 			u_next = sol.y
 			x_next = u_next[:self.input_dim]
 			h_next = u_next[self.input_dim:]
@@ -588,7 +588,7 @@ class esn(object):
 			Yq0 = np.outer(q0, m0).reshape(-1)
 			y0 = np.hstack( (Zqq0, Yq0) )
 		else:
-			y0 = None
+			y0 = np.array([])
 
 		return y0
 
@@ -644,6 +644,9 @@ class esn(object):
 		elif self.learn_memory:
 			Y = Yr
 			Z = Zrr
+		else:
+			Y = np.zeros(1)
+			Z = np.zeros(1)
 
 		# save Time-Normalized Y,Z
 		self.Y = Y / T_train
