@@ -113,8 +113,12 @@ class esn(object):
 			self.rc_error_input = 0
 			self.rf_error_input = 0
 		# count the augmented input dimensions (i.e. [x(t); f0(x(t))-x(t)])
-		self.input_dim_rc = (1 + self.rc_error_input)*self.input_dim
-		self.input_dim_rf = (1 + self.rf_error_input)*self.input_dim
+		if self.component_wise:
+			self.input_dim_rc = 1 + self.rc_error_input
+			self.input_dim_rf = 1 + self.rf_error_input
+		else:
+			self.input_dim_rc = (1 + self.rc_error_input)*self.input_dim
+			self.input_dim_rf = (1 + self.rf_error_input)*self.input_dim
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		# print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -271,7 +275,10 @@ class esn(object):
 		'learn_memory': 'MEMORY',
 		'use_f0': 'f0',
 		'test_integrator': 'INT',
-		'dt_fast_frac': 'DTF'
+		# 'dt_fast_frac': 'DTF'
+		'component_wise': 'COMP',
+		'rc_error_input': 'RCI',
+		'rf_error_input': 'RFI'
 		}
 		return keys
 
@@ -346,12 +353,7 @@ class esn(object):
 		# initialize markovian random terms for Random Feature Maps
 		if self.learn_markov:
 			b_h_markov = np.random.uniform(low=-self.rf_bias_bound, high=self.rf_bias_bound, size=(self.rf_dim, 1))
-			if self.component_wise:
-				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, 1))
-				# W_in_markov = np.kron(np.eye(self.input_dim, dtype=int), W_in_markov)
-				# b_h_markov = np.tile(b_h_markov, (self.input_dim,1))
-			else:
-				W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim))
+			W_in_markov = np.random.uniform(low=-self.rf_Win_bound, high=self.rf_Win_bound, size=(self.rf_dim, self.input_dim_rf))
 
 			self.W_in_markov = W_in_markov
 			self.b_h_markov = b_h_markov
@@ -362,8 +364,8 @@ class esn(object):
 			if self.component_wise:
 				self.reservoir_size = self.approx_reservoir_size
 			else:
-				nodes_per_input = int(np.ceil(self.approx_reservoir_size/self.input_dim))
-				self.reservoir_size = int(self.input_dim*nodes_per_input)
+				nodes_per_input = int(np.ceil(self.approx_reservoir_size/self.input_dim_rc))
+				self.reservoir_size = int(self.input_dim_rc*nodes_per_input)
 			self.sparsity = self.degree/self.reservoir_size;
 			print("NETWORK SPARSITY: {:}".format(self.sparsity))
 			# print("Computing sparse hidden to hidden weight matrix...")
@@ -371,18 +373,10 @@ class esn(object):
 
 			# Initializing the input weights
 			# print("Initializing the input weights...")
-			if self.component_wise:
-				W_in = np.zeros((self.reservoir_size, 1))
-				q = self.reservoir_size
-				for i in range(0, 1):
-					W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
-			else:
-				W_in = np.zeros((self.reservoir_size, self.input_dim))
-				q = int(self.reservoir_size/self.input_dim)
-				for i in range(0, self.input_dim):
-					W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
-			# if self.output_dynamics:
-			# 	W_in = W_in / dt
+			W_in = np.zeros((self.reservoir_size, self.input_dim_rc))
+			q = int(self.reservoir_size/self.input_dim_rc)
+			for i in range(0, W_in.shape[1]):
+				W_in[i*q:(i+1)*q,i] = self.sigma_input * (-1 + 2*np.random.rand(q))
 
 			# Initialize the hidden bias term
 			b_h = self.bias_var * np.random.randn(self.reservoir_size, 1)
@@ -446,14 +440,24 @@ class esn(object):
 			xdot = xdot[k,None]
 			m = m[k,None]
 
+		if self.rc_error_input:
+			rc_input = np.hstack((x,m))
+		else:
+			rc_input = x
+
+		if self.rf_error_input:
+			rf_input = np.hstack((x,m))
+		else:
+			rf_input = x
+
 		if self.learn_memory:
 			r = S[:self.reservoir_size]
 			r_aug = self.augmentHidden(r)
-			dr = np.tanh( self.W_h_effective @ r + self.W_in @ x + np.squeeze(self.b_h) )
+			dr = np.tanh( self.W_h_effective @ r + self.W_in @ rc_input + np.squeeze(self.b_h) )
 			dZrr = np.outer(r_aug, r_aug).reshape(-1)
 			dYr = np.outer(r_aug, m).reshape(-1)
 		if self.learn_markov:
-			q = self.q_t(x)
+			q = self.q_t(rf_input)
 			dZqq = np.outer(q, q).reshape(-1)
 			dYq = np.outer(q, m).reshape(-1)
 
@@ -488,7 +492,11 @@ class esn(object):
 					Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
 					Yr0 = np.outer(r_aug0, m0k).reshape(-1)
 					if self.learn_markov:
-						q0k = self.q_t(x0k)
+						if self.rf_error_input:
+							rf_input = np.hstack((x0k,m0k))
+						else:
+							rf_input = x0k
+						q0k = self.q_t(rf_input)
 						Zqq0 = np.outer(q0k, q0k).reshape(-1)
 						Yq0 = np.outer(q0k, m0k).reshape(-1)
 						Zrq0 = np.outer(r_aug0, q0k).reshape(-1)
@@ -507,7 +515,11 @@ class esn(object):
 				Zrr0 = np.outer(r_aug0, r_aug0).reshape(-1)
 				Yr0 = np.outer(r_aug0, m0).reshape(-1)
 				if self.learn_markov:
-					q0 = self.q_t(x0)
+					if self.rf_error_input:
+						rf_input = np.hstack((x0,m0))
+					else:
+						rf_input = x0
+					q0 = self.q_t(rf_input)
 					Zqq0 = np.outer(q0, q0).reshape(-1)
 					Yq0 = np.outer(q0, m0).reshape(-1)
 					Zrq0 = np.outer(r_aug0, q0).reshape(-1)
@@ -530,13 +542,21 @@ class esn(object):
 				for k in range(self.input_dim):
 					x0k = x0[k,None]
 					m0k = m0[k,None]
-					q0k = self.q_t(x0k)
+					if self.rf_error_input:
+						rf_input = np.hstack((x0k,m0k))
+					else:
+						rf_input = x0k
+					q0k = self.q_t(rf_input)
 					Zqq0 = np.outer(q0k, q0k).reshape(-1)
 					Yq0 = np.outer(q0k, m0k).reshape(-1)
 					y0 = np.hstack( (Zqq0, Yq0) )
 					yall.append(y0)
 			else:
-				q0 = self.q_t(x0)
+				if self.rf_error_input:
+					rf_input = np.hstack((x0,m0))
+				else:
+					rf_input = x0
+				q0 = self.q_t(rf_input)
 				Zqq0 = np.outer(q0, q0).reshape(-1)
 				Yq0 = np.outer(q0, m0).reshape(-1)
 				yall = np.hstack( (Zqq0, Yq0) )
