@@ -106,8 +106,12 @@ class esn(object):
 		if self.use_f0:
 			physics = Physics(name=params["f0_name"])
 			self.f0 = physics.rhs
+			self.rc_error_input = params["rc_error_input"]
+			self.rf_error_input = params["rf_error_input"]
 		else:
 			self.f0 = 0
+			self.rc_error_input = 0
+			self.rf_error_input = 0
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
 		# print("Reference train time {:} seconds / {:} minutes / {:} hours.".format(self.reference_train_time, self.reference_train_time/60, self.reference_train_time/60/60))
@@ -469,6 +473,9 @@ class esn(object):
 			self.W_in = W_in
 			self.W_h = W_h
 			self.W_h_effective = W_h_effective
+
+			plotMatrix(self, self.W_h.todense() , 'W_h')
+			plotMatrix(self, self.W_h_effective.todense() , 'W_h_effective')
 
 	def get_h_DL(self, dynamics_length, train_input_sequence):
 		h = np.copy(self.h_zeros)
