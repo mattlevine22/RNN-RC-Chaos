@@ -107,7 +107,7 @@ class esn(object):
 			physics = Physics(name=params["f0_name"])
 			self.f0 = physics.rhs
 			self.rc_error_input = params["rc_error_input"]
-			self.rf_error_input = params["rf_error_input"]
+			self.rf_error_input = 0 #params["rf_error_input"] #THIS doesnt work yet
 		else:
 			self.f0 = 0
 			self.rc_error_input = 0
@@ -277,8 +277,8 @@ class esn(object):
 		'test_integrator': 'INT',
 		# 'dt_fast_frac': 'DTF'
 		'component_wise': 'COMP',
-		'rc_error_input': 'RCI',
-		'rf_error_input': 'RFI'
+		'rc_error_input': 'RCI'
+		# 'rf_error_input': 'RFI'
 		}
 		return keys
 
