@@ -426,7 +426,7 @@ class esn(object):
 			m = xdot - self.f0(t0=t, u0=x)
 		else:
 			m = xdot
-		return m
+		return self.scaler.scaleDerivatives(m, reuse=True)
 
 	def q_t(self, x_t):
 		q = np.tanh(self.W_in_markov @ x_t + np.squeeze(self.b_h_markov))
@@ -659,6 +659,14 @@ class esn(object):
 		# get spline derivative
 		t_vec = self.dt*np.arange(self.x_vec.shape[0])
 		self.xdot_spline = [CubicSpline(x=t_vec, y=self.x_vec[:,k]).derivative() for k in range(self.input_dim)]
+
+		# get m(t) for all time JUST to have its statistics for normalization ahead of time
+		f0_vec = np.array([self.f0(t0=0, u0=x) for x in self.x_vec])
+		xdot_vec = np.array([self.xdot_spline[k](t_vec) for k in range(self.input_dim)]).T
+		# xdot(t) = f0(x(t)) + m(t)
+		# so, m(t) = xdot(t) - f0(x(t))
+		m_vec = xdot_vec - f0_vec
+		self.scaler.scaleDerivatives(m_vec) # just stores statistics
 
 		T_warmup = self.dt*dynamics_length
 		T_train = self.dt*tl
@@ -928,7 +936,7 @@ class esn(object):
 		print("Using {:}/{:} dimensions and {:}/{:} samples".format(input_dim, dim, N_used, N_all))
 		if N_used > N_all: raise ValueError("Not enough samples in the training data.")
 
-		# print("SCALING")
+		# scale training data
 		train_input_sequence = self.scaler.scaleData(train_input_sequence)
 
 		N, input_dim = np.shape(train_input_sequence)
@@ -1429,7 +1437,7 @@ class esn(object):
 				f_error_memory = self.W_out_memory @ self.augmentHidden(h_reservoir)
 
 		# total predicted error of rhs for x
-		m = f_error_markov + f_error_memory
+		m = self.scaler.descaleDerivatives(f_error_markov + f_error_memory)
 
 		# add mechanistic rhs
 		if self.use_f0:

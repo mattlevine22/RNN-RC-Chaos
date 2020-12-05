@@ -203,6 +203,7 @@ class scaler(object):
 		# data_mean = np.mean(train_input_sequence,0)
 		# data_std = np.std(train_input_sequence,0)
 		# train_input_sequence = (train_input_sequence-data_mean)/data_std
+
 		if self.component_wise:
 			axis = None
 		else:
@@ -447,6 +448,9 @@ def getESNParser(parser):
 	parser.add_argument("--f0_name", help="which physics-based rhs to use", type=str, default='l63')
 	parser.add_argument("--dt_fast_frac", help="multiplier of dt for fast forward test simulations", type=float, default=1)
 	parser.add_argument("--test_integrator", help="choose which integrator to use in predict_next function", type=str, default='Euler_old_fast')
+	parser.add_argument("--rc_error_input", help="boolean for whether to use RC input model-error term m(t)", type=int, default=0)
+	parser.add_argument("--rc_state_input", help="boolean for whether to use RC state input x(t) ", type=int, default=0)
+	parser.add_argument("--rf_error_input", help="boolean for whether to augment RF state input x(t) with model-error term m(t)", type=int, default=0)
 	return parser
 
 def getMLPParser(parser):
