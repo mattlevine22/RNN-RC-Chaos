@@ -107,6 +107,7 @@ class esn(object):
 			physics = Physics(name=params["f0_name"])
 			self.f0 = physics.rhs
 			self.rc_error_input = params["rc_error_input"]
+			self.rc_state_input = params["rc_state_input"]
 			self.rf_error_input = 0 #params["rf_error_input"] #THIS doesnt work yet
 		else:
 			self.f0 = 0
@@ -114,10 +115,10 @@ class esn(object):
 			self.rf_error_input = 0
 		# count the augmented input dimensions (i.e. [x(t); f0(x(t))-x(t)])
 		if self.component_wise:
-			self.input_dim_rc = 1 + self.rc_error_input
+			self.input_dim_rc = self.rc_state_input + self.rc_error_input
 			self.input_dim_rf = 1 + self.rf_error_input
 		else:
-			self.input_dim_rc = (1 + self.rc_error_input)*self.input_dim
+			self.input_dim_rc = (self.rc_state_input + self.rc_error_input)*self.input_dim
 			self.input_dim_rf = (1 + self.rf_error_input)*self.input_dim
 
 		self.reference_train_time = 60*60*(params["reference_train_time"]-params["buffer_train_time"])
@@ -277,7 +278,8 @@ class esn(object):
 		'test_integrator': 'INT',
 		# 'dt_fast_frac': 'DTF'
 		'component_wise': 'COMP',
-		'rc_error_input': 'RCI'
+		'rc_error_input': 'RCE',
+		'rc_state_input': 'RCS'
 		# 'rf_error_input': 'RFI'
 		}
 		return keys
@@ -440,10 +442,12 @@ class esn(object):
 			xdot = xdot[k,None]
 			m = m[k,None]
 
-		if self.rc_error_input:
+		if self.rc_error_input and self.rc_state_input:
 			rc_input = np.hstack((x,m))
-		else:
+		elif self.rc_state_input:
 			rc_input = x
+		elif self.rc_error_input:
+			rc_input = m
 
 		if self.rf_error_input:
 			rf_input = np.hstack((x,m))
@@ -1403,8 +1407,74 @@ class esn(object):
 		# print("\n")
 		return h
 
-
 	def rhs(self, t0, u0):
+
+		x_input = u0[:self.input_dim]
+		h_reservoir = u0[self.input_dim:]
+
+		f_error_markov = np.zeros(self.input_dim)
+		f_error_memory = np.zeros(self.input_dim)
+		if self.learn_markov:
+			if self.component_wise:
+				for k in range(self.input_dim):
+					f_error_markov[k] = self.W_out_markov @ self.q_t(x_input[k,None])
+			else:
+				f_error_markov = self.W_out_markov @ self.q_t(x_input)
+		if self.learn_memory:
+			if self.component_wise:
+				for k in range(self.input_dim):
+					kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
+					f_error_memory[k] = self.W_out_memory @ self.augmentHidden(h_reservoir[kth_inds])
+			else:
+				f_error_memory = self.W_out_memory @ self.augmentHidden(h_reservoir)
+
+		# total predicted error of rhs for x
+		m = f_error_markov + f_error_memory
+
+		# add mechanistic rhs
+		if self.use_f0:
+			y0 = self.scaler.descaleData(x_input)
+			f0 = self.f0(t0=t0, u0=y0)
+			if self.scaler_tt in ['Standard', 'standard']:
+				f0 = f0 / self.scaler.data_std
+			else:
+				raise ValueError('not set up to undo other types of normalizations!')
+		else:
+			f0 = 0
+
+		# total rhs for x
+		dx = f0 + m
+
+		# get RHS for \dot{h} hidden/reservoir state
+		if self.learn_memory:
+			if self.component_wise:
+				dh_reservoir = np.zeros(self.input_dim*self.reservoir_size)
+				for k in range(self.input_dim):
+					kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
+					xk = x_input[k,None]
+					mk = m[k,None]
+					if self.rc_state_input and self.rc_error_input:
+						rc_input = np.hstack((xk, mk))
+					elif self.rc_state_input:
+						rc_input = xk
+					elif self.rc_error_input:
+						rc_input = mk
+					dh_reservoir[kth_inds] = np.tanh(self.W_h_effective @ h_reservoir[kth_inds] + self.W_in @ rc_input + np.squeeze(self.b_h))
+			else:
+				if self.rc_state_input and self.rc_error_input:
+					rc_input = np.hstack((x_input, m))
+				elif self.rc_state_input:
+					rc_input = x_input
+				elif self.rc_error_input:
+					rc_input = m
+				dh_reservoir = np.tanh(self.W_h_effective @ h_reservoir + self.W_in @ rc_input + np.squeeze(self.b_h))
+			return np.hstack((dx, dh_reservoir))
+		else:
+			return dx
+
+
+
+	def rhs_old(self, t0, u0):
 
 		# if self.learn_markov and self.learn_memory:
 		# 	raise ValueError('Cant do both markov and memory yet!!!')
