@@ -112,6 +112,7 @@ class esn(object):
 		else:
 			self.f0 = 0
 			self.rc_error_input = 0
+			self.rc_state_input = 1
 			self.rf_error_input = 0
 		# count the augmented input dimensions (i.e. [x(t); f0(x(t))-x(t)])
 		if self.component_wise:
@@ -132,17 +133,16 @@ class esn(object):
 		print('FIGURE PATH:', self.saving_path + self.results_dir + self.model_name)
 	# def solve(self, r0, x0, solver='Euler'):
 
-	def predict_next(self, x_input, h_reservoir):
+	def predict_next(self, x_input, h_reservoir, t0=0, warmup=False):
 		solver = self.test_integrator
 
 		x_input = np.squeeze(x_input)
 		h_reservoir = np.squeeze(h_reservoir)
 
 		u0 = np.hstack((x_input, h_reservoir))
-		t0 = 0
 
 		if solver=='Euler':
-			rhs = self.rhs(t0, u0)
+			rhs = self.rhs(t0, u0, warmup=warmup)
 			u_next = u0 + self.dt * rhs
 			x_next = u_next[:self.input_dim,None]
 			h_next = u_next[self.input_dim:,None]
@@ -152,7 +152,7 @@ class esn(object):
 			t = np.float(t0)
 			u = np.copy(u0)
 			while t < t_end:
-				rhs = self.rhs(t, u)
+				rhs = self.rhs(t, u, warmup=warmup)
 				u += dt_fast * rhs
 				t += dt_fast
 			x_next = u[:self.input_dim,None]
@@ -161,12 +161,12 @@ class esn(object):
 			t_span = [t0, t0+self.dt]
 			t_eval = np.array([t0+self.dt])
 			# sol = solve_ivp(fun=lambda t, y: self.rhs(t0, y0), t_span=t_span, y0=u0, method=testcontinuous_ode_int_method, rtol=testcontinuous_ode_int_rtol, atol=testcontinuous_ode_int_atol, max_step=testcontinuous_ode_int_max_step, t_eval=t_eval)
-			sol = solve_ivp(fun=self.rhs, t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt/2)
+			sol = solve_ivp(fun=lambda t, y: self.rhs(t, y, warmup=warmup), t_span=t_span, y0=u0, t_eval=t_eval, max_step=self.dt/2)
 			u_next = sol.y
 			x_next = u_next[:self.input_dim]
 			h_next = u_next[self.input_dim:]
 		elif solver=='Euler_old':
-			rhs = self.rhs(t0, u0)
+			rhs = self.rhs(t0, u0, warmup=warmup)
 			if self.learn_markov and self.learn_memory:
 				raise ValueError('Havent dealt with this case yet')
 			elif self.learn_memory:
@@ -192,7 +192,7 @@ class esn(object):
 			t = np.float(t0)
 			u = np.copy(u0)
 			while t < t_end:
-				rhs = self.rhs(t, u)
+				rhs = self.rhs(t, u, warmup=warmup)
 				u[self.input_dim:] = u[self.input_dim:] + dt_fast * rhs[self.input_dim:]
 				if self.component_wise:
 					for k in range(self.input_dim):
@@ -210,7 +210,7 @@ class esn(object):
 			t = np.float(t0)
 			u = np.copy(u0)
 			while t < t_end:
-				rhs = self.rhs(t, u)
+				rhs = self.rhs(t, u, warmup=warmup)
 				# update reservoir state
 				u[self.input_dim:] = u[self.input_dim:] + dt_fast * rhs[self.input_dim:]
 
@@ -267,13 +267,13 @@ class esn(object):
 		'output_dynamics': 'OD',
 		'gamma': 'GAM',
 		# 'lambda': 'LAM',
-		'use_tilde': 'USETILDE',
+		'use_tilde': 'USETIL',
 		'scaler': 'SCALER',
-		# 'scaler_derivatives': 'DSCALER',
+		'scaler_derivatives': 'DSCALER',
 		'bias_var': 'BVAR',
 		'rf_dim': 'N_RF',
-		'learn_markov': 'MARKOV',
-		'learn_memory': 'MEMORY',
+		'learn_markov': 'MAR',
+		'learn_memory': 'MEM',
 		'use_f0': 'f0',
 		'test_integrator': 'INT',
 		# 'dt_fast_frac': 'DTF'
@@ -421,12 +421,13 @@ class esn(object):
 			xdot[k] = self.xdot_spline[k](t)
 		return xdot
 
-	def mdag(self, t, x, xdot):
+	def mscaled(self, t, x, xdot):
+		'''Assume that x, xdot are both in normalized coordinates'''
 		if self.use_f0:
-			m = xdot - self.f0(t0=t, u0=x)
+			m = xdot - self.scaler.scaleXdot(self.f0(t0=t, u0=self.scaler.descaleData(x)))
 		else:
 			m = xdot
-		return self.scaler.scaleDerivatives(m, reuse=True)
+		return self.scaler.scaleM(m, reuse=True)
 
 	def q_t(self, x_t):
 		q = np.tanh(self.W_in_markov @ x_t + np.squeeze(self.b_h_markov))
@@ -434,9 +435,10 @@ class esn(object):
 
 	def rcrf_rhs(self, t, S, k=None):
 		'''k is the component when doing component-wise models'''
+
 		x = self.x_t(t=t)
 		xdot = self.xdot_t(t=t)
-		m = self.mdag(t, x, xdot)
+		m = self.mscaled(t, x, xdot)
 		if self.component_wise:
 			x = x[k,None]
 			xdot = xdot[k,None]
@@ -481,7 +483,7 @@ class esn(object):
 		if self.learn_memory:
 			x0 = self.x_t(t=0)
 			xdot0 = self.xdot_t(t=0)
-			m0 = self.mdag(t=0, x=x0, xdot=xdot0)
+			m0 = self.mscaled(t=0, x=x0, xdot=xdot0)
 			if self.component_wise:
 				print('Integrating over warmup data...')
 				timer_start = time.time()
@@ -541,7 +543,7 @@ class esn(object):
 		elif self.learn_markov:
 			x0 = self.x_t(t=T_warmup)
 			xdot0 = self.xdot_t(t=T_warmup)
-			m0 = self.mdag(t=T_warmup, x=x0, xdot=xdot0)
+			m0 = self.mscaled(t=T_warmup, x=x0, xdot=xdot0)
 			if self.component_wise:
 				for k in range(self.input_dim):
 					x0k = x0[k,None]
@@ -651,22 +653,34 @@ class esn(object):
 		# store Z size for building regularization identity matrix
 		self.reg_dim = Z.shape[0]
 
-
 	def newMethod(self, tl, dynamics_length, train_input_sequence):
 
 		self.x_vec = train_input_sequence
+		self.x_vec_raw = self.scaler.descaleData(train_input_sequence)
 
 		# get spline derivative
 		t_vec = self.dt*np.arange(self.x_vec.shape[0])
 		self.xdot_spline = [CubicSpline(x=t_vec, y=self.x_vec[:,k]).derivative() for k in range(self.input_dim)]
+		self.xdot_spline_raw = [CubicSpline(x=t_vec, y=self.x_vec_raw[:,k]).derivative() for k in range(self.input_dim)]
 
 		# get m(t) for all time JUST to have its statistics for normalization ahead of time
-		f0_vec = np.array([self.f0(t0=0, u0=x) for x in self.x_vec])
 		xdot_vec = np.array([self.xdot_spline[k](t_vec) for k in range(self.input_dim)]).T
-		# xdot(t) = f0(x(t)) + m(t)
-		# so, m(t) = xdot(t) - f0(x(t))
-		m_vec = xdot_vec - f0_vec
-		self.scaler.scaleDerivatives(m_vec) # just stores statistics
+		xdot_vec_raw = np.array([self.xdot_spline_raw[k](t_vec) for k in range(self.input_dim)]).T
+
+
+		# troubleshoot
+		xdot0 = np.array([self.xdot_spline[k](0) for k in range(self.input_dim)]).T
+		xdot0_raw = np.array([self.xdot_spline_raw[k](0) for k in range(self.input_dim)]).T
+
+		if self.use_f0:
+			f0_vec = np.array([self.f0(t0=0, u0=x) for x in self.scaler.descaleData(self.x_vec)])
+			# xdot(t) = f0(x(t)) + m(t)
+			# so, m(t) = xdot(t) - f0(x(t))
+			m_vec = xdot_vec - self.scaler.scaleXdot(f0_vec)
+			self.scaler.scaleM(m_vec) # just stores statistics
+		else:
+			self.scaler.scaleM(xdot_vec) # just stores statistics
+
 
 		T_warmup = self.dt*dynamics_length
 		T_train = self.dt*tl
@@ -750,7 +764,13 @@ class esn(object):
 			plotMatrix(self, self.W_out_markov, 'W_out_markov')
 		if self.learn_memory:
 			plotMatrix(self, self.W_out_memory, 'W_out_memory')
+
+		# Compute residuals from inversion
+		res = (self.Z + regI) @ W_out_all.T - self.Y
+		mse = np.mean(res**2)
+		print('Inversion MSE for lambda_RC={lrc}, lambda_RF={lrf} is {mse}'.format(lrc=self.regularization_RC, lrf=self.regularization_RF, mse=mse))
 		return
+
 
 	def getPrediction(self):
 		pred = np.zeros( (self.X.shape[0], self.input_dim) )
@@ -1028,6 +1048,10 @@ class esn(object):
 		# PREDICTION LENGTH
 		if N != iterative_prediction_length + dynamics_length: raise ValueError("Error! N != iterative_prediction_length + dynamics_length")
 
+		self.x_vec = input_sequence[:dynamics_length-2]
+		t_vec = self.dt*np.arange(self.x_vec.shape[0])
+		self.xdot_spline = [CubicSpline(x=t_vec, y=self.x_vec[:,k]).derivative() for k in range(self.input_dim)]
+
 		prediction_warm_up = []
 		hidden_warm_up = []
 		h = np.copy(self.h_zeros)
@@ -1037,7 +1061,8 @@ class esn(object):
 			i = np.reshape(input_sequence[t-1], (-1,1))
 
 			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"]:
-				out, h = self.predict_next(i, h)
+				out, h = self.predict_next(i, h, t0=(t-1)*self.dt, warmup=True)
+
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
 				if self.learn_memory:
@@ -1058,7 +1083,7 @@ class esn(object):
 					h_all = self.augmentHidden(h)
 
 				if self.output_dynamics=="simpleRHS":
-					out = i + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
+					out = i + self.dt * self.scaler.descaleM((W_out @ h_all).T).T
 				elif self.output_dynamics=="andrewRHS":
 					out = i - self.lam * self.dt * ( i - W_out @ h_all )
 				else:
@@ -1078,7 +1103,7 @@ class esn(object):
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 
 			if  (not self.learn_memory or self.hidden_dynamics in ['ARNN', 'naiveRNN', 'LARNN_forward']) and self.output_dynamics in ["simpleRHS"]:
-				out, h = self.predict_next(i, h)
+				out, h = self.predict_next(i, h, t0=(dynamics_length+t-1)*self.dt, warmup=False)
 			else:
 				raise ValueError('TAKE HEED: back to the old way of doing things.')
 				if self.learn_memory:
@@ -1099,7 +1124,7 @@ class esn(object):
 					h_all = self.augmentHidden(h)
 
 				if self.output_dynamics=="simpleRHS":
-					out = out + self.dt * self.scaler.descaleDerivatives((W_out @ h_all).T).T
+					out = out + self.dt * self.scaler.descaleM((W_out @ h_all).T).T
 				elif self.output_dynamics=="andrewRHS":
 					out = out - self.lam * self.dt * ( out - W_out @ h_all )
 				else:
@@ -1160,7 +1185,7 @@ class esn(object):
 				print("PREDICTION: T {:}/{:}, {:2.3f}%".format(t, iterative_prediction_length, t/iterative_prediction_length*100), end="\r")
 			signal.append(i)
 			if self.output_dynamics=="simpleRHS":
-				out = out + self.dt * self.scaler.descaleDerivatives((W_out @ self.augmentHidden(h)).T).T
+				out = out + self.dt * self.scaler.descaleM((W_out @ self.augmentHidden(h)).T).T
 			elif self.output_dynamics=="andrewRHS":
 				out = out - self.lam * self.dt * ( out - W_out @ self.augmentHidden(h) )
 			else:
@@ -1415,7 +1440,7 @@ class esn(object):
 		# print("\n")
 		return h
 
-	def rhs(self, t0, u0):
+	def rhs(self, t0, u0, warmup=False):
 
 		x_input = u0[:self.input_dim]
 		h_reservoir = u0[self.input_dim:]
@@ -1437,21 +1462,25 @@ class esn(object):
 				f_error_memory = self.W_out_memory @ self.augmentHidden(h_reservoir)
 
 		# total predicted error of rhs for x
-		m = self.scaler.descaleDerivatives(f_error_markov + f_error_memory)
+		# m = self.scaler.descaleM(f_error_markov + f_error_memory)
+		if warmup:
+			xdot = self.xdot_t(t=t0)
+			m_scaled = self.mscaled(t0, x_input, xdot)
+			# print(m_scaled)
+			# pdb.set_trace()
+		else:
+			m_scaled = f_error_markov + f_error_memory
+			# print(m_scaled)
+			# pdb.set_trace()
 
 		# add mechanistic rhs
 		if self.use_f0:
-			y0 = self.scaler.descaleData(x_input)
-			f0 = self.f0(t0=t0, u0=y0)
-			if self.scaler_tt in ['Standard', 'standard']:
-				f0 = f0 / self.scaler.data_std
-			else:
-				raise ValueError('not set up to undo other types of normalizations!')
+			f0 = self.scaler.scaleXdot(self.f0(t0=t0, u0=self.scaler.descaleData(x_input)))
 		else:
 			f0 = 0
 
 		# total rhs for x
-		dx = f0 + m
+		dx = f0 + self.scaler.descaleM(f_error_markov + f_error_memory)
 
 		# get RHS for \dot{h} hidden/reservoir state
 		if self.learn_memory:
@@ -1460,7 +1489,7 @@ class esn(object):
 				for k in range(self.input_dim):
 					kth_inds = np.arange((k*self.reservoir_size),((k+1)*self.reservoir_size))
 					xk = x_input[k,None]
-					mk = m[k,None]
+					mk = m_scaled[k,None]
 					if self.rc_state_input and self.rc_error_input:
 						rc_input = np.hstack((xk, mk))
 					elif self.rc_state_input:
@@ -1470,11 +1499,11 @@ class esn(object):
 					dh_reservoir[kth_inds] = np.tanh(self.W_h_effective @ h_reservoir[kth_inds] + self.W_in @ rc_input + np.squeeze(self.b_h))
 			else:
 				if self.rc_state_input and self.rc_error_input:
-					rc_input = np.hstack((x_input, m))
+					rc_input = np.hstack((x_input, m_scaled))
 				elif self.rc_state_input:
 					rc_input = x_input
 				elif self.rc_error_input:
-					rc_input = m
+					rc_input = m_scaled
 				dh_reservoir = np.tanh(self.W_h_effective @ h_reservoir + self.W_in @ rc_input + np.squeeze(self.b_h))
 			return np.hstack((dx, dh_reservoir))
 		else:
